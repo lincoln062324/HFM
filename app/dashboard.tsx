@@ -5,6 +5,9 @@ import Icon from "react-native-vector-icons/FontAwesome";
 import Icon2 from "react-native-vector-icons/FontAwesome5";
 import { PieChart } from "react-native-gifted-charts";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import supabase from '../lib/supabase';
+
+
 
 // Theme colors matching SettingsScreen
 const THEME_COLORS = {
@@ -174,7 +177,6 @@ interface HabitReminderData {
 
 // Calorie Chart Configuration
 const CALORIE_CHART_CONFIG = {
-  goal: 5000,
   food: { color: "#84d7f4" },
   exercise: { color: "#F3AF41" },
   remaining: { color: "#E8DEF8" },
@@ -288,7 +290,9 @@ const INITIAL_REMINDERS: HabitReminder[] = [
   },
 ];
 
-export default function Dashboard() {
+const Dashboard = () => {
+  console.log(supabase)
+
   const systemColorScheme = useColorScheme();
   const [isSidebarVisible, setIsSidebarVisible] = useState(false);
   const [appTheme, setAppTheme] = useState(DEFAULT_THEME);
@@ -335,18 +339,49 @@ export default function Dashboard() {
       console.log('Error saving theme:', error);
     }
   };
-  const sidebarAnimation = useRef(new Animated.Value(-Dimensions.get('window').width * 0.7)).current;
+const sidebarAnimation = useRef(new Animated.Value(-Dimensions.get('window').width * 0.7)).current;
 const [foodValue, setFoodValue] = useState(0);
-  const [exerciseValue, setExerciseValue] = useState(0);
+const [exerciseValue, setExerciseValue] = useState(0);
+const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
+  const [showGoalReachedModal, setShowGoalReachedModal] = useState(false);
+  const [goalReachedToday, setGoalReachedToday] = useState(false);
+  const [selectedQuote, setSelectedQuote] = useState('');
 
-// Load saved values
+  const MOTIVATIONAL_QUOTES = [
+    "🎉 Goal reached! You're crushing it today!",
+    "Amazing work! Your dedication is paying off!",
+    "You're a fitness rockstar! Keep shining! ⭐",
+    "Goal achieved! Consistency creates results!",
+    "Incredible! You've earned that victory dance! 💃",
+    "Target hit! Your hard work is unstoppable!",
+    "Legendary effort! You're building an epic future!",
+    "Mission accomplished! You're unstoppable! 🚀",
+    "Perfect execution! Health is your superpower!",
+    "Champion status achieved! Own your greatness!",
+  ];
+
+  // Load saved values including goal
   useEffect(() => {
     const loadValues = async () => {
       try {
         const food = await AsyncStorage.getItem('@foodValue');
         const exercise = await AsyncStorage.getItem('@exerciseValue');
+        const goal = await AsyncStorage.getItem('@dailyCalorieGoal');
+        const todayFlag = await AsyncStorage.getItem('@goalReachedToday');
+        const today = new Date().toDateString();
+        const savedDate = await AsyncStorage.getItem('@goalReachedDate');
+        
         if (food !== null) setFoodValue(parseInt(food));
         if (exercise !== null) setExerciseValue(parseInt(exercise));
+        if (goal !== null) setDailyCalorieGoal(parseInt(goal));
+        
+        // Reset daily flag if new day
+        if (savedDate !== today) {
+          setGoalReachedToday(false);
+          await AsyncStorage.multiRemove(['@goalReachedToday', '@goalReachedDate']);
+        } else if (todayFlag === 'true') {
+          setGoalReachedToday(true);
+        }
       } catch (error) {
         console.log('Error loading values:', error);
       }
@@ -354,13 +389,32 @@ const [foodValue, setFoodValue] = useState(0);
     loadValues();
   }, []);
 
-  // Save values when changed
+  // Save values when changed + check goal reached
+  const checkGoalReached = async (newTotalProgress: number) => {
+    if (goalReachedToday || newTotalProgress < dailyCalorieGoal) return;
+
+    const today = new Date().toDateString();
+    const savedDate = await AsyncStorage.getItem('@goalReachedDate');
+    
+    if (savedDate !== today) {
+      setSelectedQuote(MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)]);
+      setShowGoalReachedModal(true);
+      setGoalReachedToday(true);
+      await AsyncStorage.multiSet([
+        ['@goalReachedToday', 'true'],
+        ['@goalReachedDate', today]
+      ]);
+    }
+  };
+
   const saveFoodValue = async (addedCalories: number) => {
     const current = foodValue;
     const newTotal = current + addedCalories;
+    const newTotalProgress = newTotal + exerciseValue;
     setFoodValue(newTotal);
     try {
       await AsyncStorage.setItem('@foodValue', newTotal.toString());
+      await checkGoalReached(newTotalProgress);
     } catch (error) {
       console.log('Error saving food value:', error);
     }
@@ -369,11 +423,22 @@ const [foodValue, setFoodValue] = useState(0);
   const saveExerciseValue = async (addedCalories: number) => {
     const current = exerciseValue;
     const newTotal = current + addedCalories;
+    const newTotalProgress = newTotal + foodValue;
     setExerciseValue(newTotal);
     try {
       await AsyncStorage.setItem('@exerciseValue', newTotal.toString());
+      await checkGoalReached(newTotalProgress);
     } catch (error) {
       console.log('Error saving exercise value:', error);
+    }
+  };
+
+  const updateDailyGoal = async (newGoal: number) => {
+    setDailyCalorieGoal(newGoal);
+    try {
+      await AsyncStorage.setItem('@dailyCalorieGoal', newGoal.toString());
+    } catch (error) {
+      console.log('Error saving goal:', error);
     }
   };
   const [isMenuVisible, setIsMenuVisible] = useState(false);
@@ -889,7 +954,7 @@ const [foodValue, setFoodValue] = useState(0);
     setIsNotificationModalVisible(true);
   };
 
-  const handleCreateHabit = () => {
+const handleCreateHabit = async () => {
     if (!selectedHabit) {
       Alert.alert('Error', 'Please select a habit.');
       return;
@@ -907,22 +972,35 @@ const [foodValue, setFoodValue] = useState(0);
     // Format time for display (12-hour format)
     const formattedTime = formatTimeForDisplay(reminderTime);
 
-    // Create new habit reminder
-    const newHabit: HabitReminder = {
-      id: Date.now(),
-      name: selectedHabit.name,
-      benefits: selectedHabit.benefits,
-      alarmTime: formattedTime,
-      date: reminderDate,
-      repeat: repeatOption,
-      isActive: true,
-      isDone: false,
-      totalDone: 0,
-      totalUndone: 0,
-    };
+    // Find habit_id by name (no auth needed)
+    const { data: habit, error: habitError } = await supabase
+      .from('habits')
+      .select('id')
+      .eq('name', selectedHabit.name)
+      .single();
 
-    // Add to reminders state
-    setReminders(prev => [...prev, newHabit]);
+    if (habitError || !habit) {
+      Alert.alert('Error', 'Habit not found in database');
+      return;
+    }
+
+    // Insert reminder without user_id (public)
+    const { error } = await supabase
+      .from('user_reminders')
+      .insert({
+        habit_id: habit.id,
+        alarm_time: reminderTime,
+        date: reminderDate,
+        repeat: repeatOption,
+        is_active: true,
+        total_done: 0,
+        total_undone: 0,
+      });
+
+    if (error) {
+      Alert.alert('Error', error.message);
+      return;
+    }
 
     setIsNotificationModalVisible(false);
     setSelectedHabit(null);
@@ -930,14 +1008,16 @@ const [foodValue, setFoodValue] = useState(0);
     setReminderDate(new Date().toISOString().split('T')[0]);
     setRepeatOption('Daily');
 
-    Alert.alert('Habit Created', `Your habit "${selectedHabit.name}" has been added with reminder at ${formattedTime} (${repeatOption}).`);
+    Alert.alert('Success', `Habit "${selectedHabit.name}" added to Supabase!`);
   };
 
-  const totalProgress = foodValue + exerciseValue;
+
+
+const totalProgress = foodValue + exerciseValue;
   const hasProgress = foodValue > 0 || exerciseValue > 0;
-  const remainingCalories = hasProgress ? Math.max(0, CALORIE_CHART_CONFIG.goal - totalProgress) : CALORIE_CHART_CONFIG.goal;
+  const remainingCalories = hasProgress ? Math.max(0, dailyCalorieGoal - totalProgress) : dailyCalorieGoal;
   const remainingColor = hasProgress ? CALORIE_CHART_CONFIG.remaining.color : CALORIE_CHART_CONFIG.base.color;
-  const calorieData = [
+  const dynamicCalorieData = [
     { value: exerciseValue, color: CALORIE_CHART_CONFIG.exercise.color },
     { value: foodValue, color: CALORIE_CHART_CONFIG.food.color },
     { value: remainingCalories, color: remainingColor },
@@ -1157,7 +1237,7 @@ const navigateToRecipes = () => {
         <Animated.View style={[styles.screenContent, { transform: [{ scale: screenScale }] }]}>
           {showProfileScreen && <ProfileScreen onClose={handleCloseProfile} />}
           {showWeeklyReportScreen && <WeeklyReportScreen onClose={handleCloseWeeklyReport} />}
-          {showGoalsScreen && <GoalsScreen onClose={handleCloseGoals} />}
+{showGoalsScreen && <GoalsScreen onClose={handleCloseGoals} onGoalUpdate={updateDailyGoal} />}
           {showExerciseScreen && <ExerciseScreen onClose={handleCloseExercise} onExerciseBurned={saveExerciseValue} />}
           {showRecipesScreen && <RecipesScreen onClose={handleCloseRecipes} onFoodAdded={saveFoodValue} />}
           {showStepsScreen && <StepsScreen onClose={handleCloseSteps} />}
@@ -1258,7 +1338,7 @@ const navigateToRecipes = () => {
               <Text style={styles.caloriesC}>Remaining = Goal - Food + Exercise</Text>
             <View style={styles.pieChartContainer}>
               <PieChart
-                data={calorieData}
+data={dynamicCalorieData}
                 radius={90}
                 innerRadius={50}
                 textColor="#FFFFFF"
@@ -1278,7 +1358,7 @@ const navigateToRecipes = () => {
                 <Icon style={styles.icon33} name="circle" />
                 <View style={styles.BG}>
                   <Text style={styles.statisticsText}>Basic Goal</Text>
-                  <Text style={styles.numB}>{CALORIE_CHART_CONFIG.goal}</Text>
+<Text style={styles.numB}>{dailyCalorieGoal}</Text>
                 </View>
                 <Icon style={styles.icon4} name="circle" />
                 <Icon style={styles.icon44} name="circle" />
@@ -1309,7 +1389,7 @@ const navigateToRecipes = () => {
                   <View style={styles.statisticsModalContent}>
                     <View style={styles.statCard}>
                       <Text style={styles.statLabel}>Goal</Text>
-                      <Text style={styles.statValue}>{CALORIE_CHART_CONFIG.goal} kcal</Text>
+                      <Text style={styles.statValue}>{dailyCalorieGoal} kcal</Text>
                     </View>
                     <View style={styles.statCard}>
                       <Text style={styles.statLabelf}>Food Intake</Text>
@@ -1322,7 +1402,7 @@ const navigateToRecipes = () => {
                     <View style={styles.statCard}>
                       <Text style={styles.statLabel}>Remaining</Text>
                       <Text style={[styles.statValue, styles.remainingStat]}>
-                        {Math.max(0, CALORIE_CHART_CONFIG.goal - foodValue - exerciseValue)} kcal
+                        {Math.max(0, dailyCalorieGoal - foodValue - exerciseValue)} kcal
                       </Text>
                     </View>
                     <View style={styles.progressButtons}>
@@ -1443,9 +1523,9 @@ const navigateToRecipes = () => {
 
       {/* Animated Reminder Modal */}
       {isNotificationModalVisible && (
-        <Animated.View style={[styles.animatedModalContainer, { opacity: reminderModalBackdrop }]}>
-          <Pressable style={styles.animatedBackdrop} onPress={() => animateReminderModalOut(() => setIsNotificationModalVisible(false))} />
-          <Animated.View style={[styles.animatedModalContent, { transform: [{ scale: reminderModalScale }], opacity: reminderModalOpacity }]}>
+        <Animated.View style={[styles.animatedModalContainerr, { opacity: reminderModalBackdrop }]}>
+          <Pressable style={styles.animatedBackdropr} onPress={() => animateReminderModalOut(() => setIsNotificationModalVisible(false))} />
+          <Animated.View style={[styles.animatedModalContentr, { transform: [{ scale: reminderModalScale }], opacity: reminderModalOpacity }]}>
             <Text style={styles.modalTitle}>Set Reminder</Text>
             <Text style={styles.notificationText}>Allow push notifications to remind you of your habit.</Text>
 
@@ -1807,6 +1887,8 @@ const navigateToRecipes = () => {
     </View>
   );
 }
+
+export default Dashboard
 
 const styles = StyleSheet.create({
   statisticsPressable: {
@@ -2361,6 +2443,30 @@ const styles = StyleSheet.create({
     padding: 20,
     width: "85%",
     height: 600,
+  },
+  animatedModalContainerr: {
+    position: "absolute",
+    width: '100%',
+    height: '100%',
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 800,
+  },
+  animatedBackdropr: {
+    position: "absolute",
+    width: '100%',
+    height: '100%',
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    borderRadius: 25,
+  },
+  animatedModalContentr: {
+    position: 'relative',
+    top: 0,
+    backgroundColor: "#2c2c2c",
+    borderRadius: 15,
+    padding: 20,
+    width: "85%",
+    height: 680,
   },
   animatedModalContainer: {
     position: "absolute",

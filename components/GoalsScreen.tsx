@@ -1,12 +1,16 @@
 // Goals Screen Component
-import { StyleSheet, Text, View, ScrollView, Pressable } from "react-native";
+import { StyleSheet, Text, View, ScrollView, Pressable, TextInput } from "react-native";
 import React from "react";
 import Icon from "react-native-vector-icons/FontAwesome";
 import Icon2 from "react-native-vector-icons/Entypo";
 import { PieChart } from "react-native-gifted-charts";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+// import { Slider } from "@react-native-community/slider";
+
 interface GoalsScreenProps {
   onClose: () => void;
+  onGoalUpdate?: (goal: number) => void;
 }
 
 // Custom ProgressBar Component
@@ -90,7 +94,45 @@ const getConsistencyText = (status: string) => {
   }
 };
 
-export default function GoalsScreen({ onClose }: GoalsScreenProps) {
+export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps) {
+  const [dailyCalorieGoal, setDailyCalorieGoal] = React.useState(2000);
+  const [foodValue, setFoodValue] = React.useState(0);
+  const [exerciseValue, setExerciseValue] = React.useState(0);
+  const [editingGoal, setEditingGoal] = React.useState(false);
+  const [tempGoal, setTempGoal] = React.useState(2000);
+
+  React.useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      const goal = await AsyncStorage.getItem('@dailyCalorieGoal');
+      const food = await AsyncStorage.getItem('@foodValue');
+      const exercise = await AsyncStorage.getItem('@exerciseValue');
+      if (goal) setDailyCalorieGoal(parseInt(goal));
+      if (food) setFoodValue(parseInt(food));
+      if (exercise) setExerciseValue(parseInt(exercise));
+      setTempGoal(parseInt(goal || '2000'));
+    } catch (error) {
+      console.log('Error loading goal data:', error);
+    }
+  };
+
+  const saveGoal = async () => {
+    try {
+      await AsyncStorage.setItem('@dailyCalorieGoal', tempGoal.toString());
+      setDailyCalorieGoal(tempGoal);
+      setEditingGoal(false);
+      onGoalUpdate?.(tempGoal);
+      alert('Daily goal updated!');
+    } catch (error) {
+      console.log('Error saving goal:', error);
+      alert('Error saving goal');
+    }
+  };
+
+  const totalProgress = foodValue + exerciseValue;
   const foodPieData = [
     { value: 45, color: '#F3AF41', text: 'Carbs' },
     { value: 30, color: '#84d7f4', text: 'Protein' },
@@ -110,6 +152,60 @@ export default function GoalsScreen({ onClose }: GoalsScreenProps) {
       </View>
 
       <ScrollView style={styles.content}>
+        {/* Daily Calorie Goal Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Daily Calorie Goal</Text>
+          
+          <View style={styles.goalInputSection}>
+            {editingGoal ? (
+              <>
+                <View style={styles.goalSlider}>
+                  <Text style={styles.sliderLabel}>Goal: {Math.round(tempGoal)} kcal</Text>
+                </View>
+                <View style={styles.goalInputRow}>
+                  <TextInput
+                    style={styles.goalInput}
+                    value={tempGoal.toString()}
+                    onChangeText={(text) => setTempGoal(parseInt(text) || 2000)}
+                    keyboardType="numeric"
+                  />
+                  <Text style={styles.goalUnit}>kcal</Text>
+                </View>
+                <View style={styles.goalButtons}>
+                  <Pressable style={styles.saveButton} onPress={saveGoal}>
+                    <Text style={styles.saveButtonText}>Save Goal</Text>
+                  </Pressable>
+                  <Pressable style={styles.cancelButton} onPress={() => {setEditingGoal(false); setTempGoal(dailyCalorieGoal);}}>
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.currentGoal}>{dailyCalorieGoal} kcal</Text>
+                <Pressable style={styles.editGoalButton} onPress={() => setEditingGoal(true)}>
+                  <Text style={styles.editGoalText}>Edit Goal</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+
+          <View style={styles.progressSection}>
+            <Text style={styles.progressLabel}>Today&apos;s Progress</Text>
+            <ProgressBar
+              progress={Math.min(totalProgress / dailyCalorieGoal, 1)}
+              width={280}
+              height={12}
+              color="#4CAF50"
+              backgroundColor="#362c3a"
+              borderRadius={6}
+            />
+            <Text style={styles.progressText}>
+              {totalProgress} / {dailyCalorieGoal} kcal ({Math.round((totalProgress / dailyCalorieGoal) * 100)}%)
+            </Text>
+          </View>
+        </View>
+
         {/* Weight Goal */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Weight Goal</Text>
@@ -363,6 +459,92 @@ export default function GoalsScreen({ onClose }: GoalsScreenProps) {
 }
 
 const styles = StyleSheet.create({
+  goalInputSection: {
+    marginBottom: 20,
+  },
+  goalSlider: {
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#313031',
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginBottom: 15,
+  },
+  sliderLabel: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  goalInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 15,
+  },
+  goalInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    fontSize: 20,
+    width: 100,
+    textAlign: 'center',
+    marginRight: 10,
+  },
+  goalUnit: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  goalButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'center',
+  },
+  saveButton: {
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    flex: 1,
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#666',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    flex: 1,
+  },
+  cancelButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  currentGoal: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#c67ee2',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  editGoalButton: {
+    backgroundColor: '#c67ee2',
+    paddingHorizontal: 30,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignSelf: 'center',
+  },
+  editGoalText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
   container: {
     position: "absolute",
     top: 0,

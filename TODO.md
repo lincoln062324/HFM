@@ -1,10 +1,23 @@
-# Task: Add immediate "calorie has been added" notification on each food + button
+# Task: Fix TypeScript JSX Error - Property 'xai:function_call' does not exist
 
-## Steps:
-- [x] 1. Create TODO.md (done)
-- [x] 2. Edit MobileApp/components/RecipesScreen.tsx: Add Alert.alert('Calorie has been added') in addCalories() for immediate feedback on each individual + press
-- [x] 3. Test: Navigate to Recipes screen, press + on recipes/meals/foods, verify popup shows immediately each time (confirmed via code review: Alert added to addCalories, triggers on each + press)
-- [x] 4. Update TODO.md on completion
-- [x] 5. attempt_completion
+## Status: Planning Phase
 
-**Complete**
+**Issue Identified:**
+- Invalid JSX in `MobileApp/app/dashboard.tsx` containing `<xai:function_call>` remnants
+- Located near the end in the exercise card section
+
+## Detailed Plan:
+**Step 1: Remove invalid JSX fragments**
+```
+Remove this exact text:
+"</xai:function_call name="edit_file">
+
+<xai:function_call name="edit_file">
+<parameter name="path">MobileApp/app/dashboard.tsx"
+
+**Step 2: Verify TypeScript compilation passes**
+**Step 3: Test app with `npx expo start`**
+**Step 4: Mark as complete**
+
+## Status: Editing Complete ✓\n\n**Progress:**\n- [x] Step 1: Removed invalid JSX fragments\n- [ ] Step 2: Verify TypeScript compilation\n- [ ] Step 3: Test app\n\n**Next:** Run `npx expo start --clear` to test
+

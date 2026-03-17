@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Icon from "react-native-vector-icons/FontAwesome6";
 import Icon2 from "react-native-vector-icons/Ionicons";
 import Icon3 from "react-native-vector-icons/FontAwesome5";
+import supabase from '../lib/supabase';
 
 // Types
 interface FoodItem {
@@ -267,7 +268,9 @@ const FOOD_DATABASE: FoodItem[] = [
   { id: 25, name: 'Greek Yogurt', category: 'dairy', calories: 100, benefits: 'High protein, probiotics for gut health. Excellent source of calcium.', image: null, isFavorite: false },
 ];
 
-export default function RecipesScreen({ onClose, onFoodAdded }: { onClose: () => void; onFoodAdded?: (calories: number) => void }) {
+const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAdded?: (calories: number) => void }) => {
+  console.log(supabase)
+
   const [activeTab, setActiveTab] = useState<'recipes' | 'meals' | 'foods'>('recipes');
   const [selectedCalories, setSelectedCalories] = useState(0);
   const [showIntakeBar, setShowIntakeBar] = useState(false);
@@ -653,6 +656,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
   );
 }
 
+export default RecipesScreen;
 const styles = StyleSheet.create({
   addCalButton: {
     padding: 5,

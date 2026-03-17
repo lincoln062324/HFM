@@ -1,6 +1,7 @@
 // Profile Screen Component
 import { StyleSheet, Text, View, Image, ScrollView, Pressable, Dimensions } from "react-native";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Icon from "react-native-vector-icons/FontAwesome";
 import Icon1 from "react-native-vector-icons/Foundation";
 import Icon2 from "react-native-vector-icons/Entypo";
@@ -49,6 +50,32 @@ const USER_DATA = {
 };
 
 export default function ProfileScreen({ onClose }: ProfileScreenProps) {
+  const [dailyGoalAchieved, setDailyGoalAchieved] = useState(false);
+  const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
+  const [foodValue, setFoodValue] = useState(0);
+  const [exerciseValue, setExerciseValue] = useState(0);
+  const [totalProgress, setTotalProgress] = useState(0);
+
+  useEffect(() => {
+    loadGoalStatus();
+  }, []);
+
+  const loadGoalStatus = async () => {
+    try {
+      const achieved = await AsyncStorage.getItem('@goalReachedToday');
+      const goal = await AsyncStorage.getItem('@dailyCalorieGoal');
+      const food = await AsyncStorage.getItem('@foodValue');
+      const exercise = await AsyncStorage.getItem('@exerciseValue');
+
+      setDailyGoalAchieved(achieved === 'true');
+      if (goal) setDailyCalorieGoal(parseInt(goal));
+      if (food) setFoodValue(parseInt(food));
+      if (exercise) setExerciseValue(parseInt(exercise));
+      setTotalProgress((parseInt(food || '0') + parseInt(exercise || '0')));
+    } catch (error) {
+      console.log('Error loading goal status:', error);
+    }
+  };
   const lineData = USER_DATA.weeklyProgress.map((item) => ({
     value: item.value,
     label: item.day,
@@ -188,14 +215,17 @@ export default function ProfileScreen({ onClose }: ProfileScreenProps) {
 
         {/* Daily Goal Status */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Daily Goal</Text>
+          <Text style={styles.sectionTitle}>Daily Goal Status</Text>
           <View style={styles.goalStatus}>
             <Icon 
-              style={[styles.goalIcon, USER_DATA.dailyGoalAchieved && styles.goalIconAchieved]} 
-              name={USER_DATA.dailyGoalAchieved ? "check-circle" : "times-circle"} 
+              style={[styles.goalIcon, dailyGoalAchieved && styles.goalIconAchieved]} 
+              name={dailyGoalAchieved ? "check-circle" : "times-circle"} 
             />
             <Text style={styles.goalText}>
-              {USER_DATA.dailyGoalAchieved ? "Goal Achieved!" : "Goal Not Achieved"}
+              {dailyGoalAchieved ? "✅ Goal Reached Today!" : "🎯 Keep going!"}
+            </Text>
+            <Text style={styles.goalSubText}>
+              Current Goal: {dailyCalorieGoal} kcal | Progress: {totalProgress} kcal
             </Text>
           </View>
         </View>
@@ -224,6 +254,12 @@ export default function ProfileScreen({ onClose }: ProfileScreenProps) {
 }
 
 const styles = StyleSheet.create({
+  goalSubText: {
+    fontSize: 14,
+    color: '#CCCCCC',
+    textAlign: 'center',
+    marginTop: 5,
+  },
   container: {
     position: "absolute",
     width: "100%",
