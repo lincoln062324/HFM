@@ -570,69 +570,108 @@ supabase.auth.getSession().then(({ data: { session } }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-// Load notes from Supabase (user-specific)
+// Load notes from Supabase OR local (guest-first!)
 const loadNotesFromSupabase = useCallback(async (): Promise<StickyNote[]> => {
   try {
+    setNotesLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
+    
     if (user) {
-      setNotesLoading(true);
+      console.log('👤 Logged in - loading Supabase notes for', user.id);
       const { data, error } = await supabase
         .from('sticky_notes')
         .select('*')
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
-      setNotesLoading(false);
-      if (error) throw error;
-      return (data || []).map((dbNote: any): StickyNote => ({
-        id: dbNote.id,
-        title: dbNote.title || 'Untitled Note',
-        content: dbNote.content || '',
-        items: dbNote.items || [],
-        createdAt: dbNote.created_at,
-        updatedAt: dbNote.updated_at,
-      }));
+      
+      if (error) {
+        console.warn('⚠️ Supabase error (RLS?):', error.message);
+      } else if (data && data.length > 0) {
+        console.log('✅ Supabase notes loaded:', data.length);
+        const notes = (data || []).map((dbNote: any): StickyNote => ({
+          id: dbNote.id,
+          title: dbNote.title || 'Untitled Note',
+          content: dbNote.content || '',
+          items: dbNote.items || [],
+          createdAt: dbNote.created_at,
+          updatedAt: dbNote.updated_at,
+        }));
+        setNotesError(null);
+        setNotesLoading(false);
+        return notes;
+      }
     }
-    return [];
+    
+    // Guest mode or Supabase empty/fail → LOCAL FIRST
+    console.log('📱 Guest/local mode - loading AsyncStorage');
+    const storedNotes = await AsyncStorage.getItem(STORAGE_KEY);
+    const localNotes: StickyNote[] = storedNotes ? JSON.parse(storedNotes) : [];
+    console.log('💾 Local notes loaded:', localNotes.length);
+    setNotesError(null);
+    setNotesLoading(false);
+    return localNotes;
+    
   } catch (error: any) {
-    console.error('Supabase notes error:', error);
+    console.error('💥 Load notes error:', error);
     setNotesError(error.message || 'Failed to load notes');
     setNotesLoading(false);
-    return [];
-  }
-}, []);
-
-// Save single note to Supabase
-const saveNoteToSupabase = useCallback(async (note: StickyNote): Promise<void> => {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { error } = await supabase
-        .from('sticky_notes')
-        .upsert({
-          id: note.id,
-          user_id: user.id,
-          title: note.title,
-          content: note.content,
-          items: note.items,
-          updated_at: new Date().toISOString(),
-        });
-      if (error) throw error;
-    } else {
-      // Anon/guest mode - use device ID or local only
-      console.log('Guest mode - local save only');
+    // Final fallback
+    try {
+      const storedNotes = await AsyncStorage.getItem(STORAGE_KEY);
+      return storedNotes ? JSON.parse(storedNotes) : [];
+    } catch {
+      return [];
     }
-  } catch (error: any) {
-    console.error('Save note error:', error);
-    setNotesError(error.message || 'Failed to save note');
-    // Always local fallback
-    const notes = await loadNotes();
-    const updatedNotes = notes.map(n => n.id === note.id ? note : n);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedNotes));
   }
 }, []);
 
-// Delete note from Supabase
-  const deleteNoteFromSupabase = useCallback(async (noteId: string): Promise<void> => {
+const saveNoteToSupabase = useCallback(async (note: StickyNote): Promise<void> => {
+  console.log('💾 saveNoteToSupabase → LOCAL + SUPABASE:', {id: note.id, title: note.title, session: !!userSession?.user});
+  
+  // 1. ALWAYS local → instant UI
+  try {
+    const localNotesStr = await AsyncStorage.getItem(STORAGE_KEY);
+    const localNotes: StickyNote[] = localNotesStr ? JSON.parse(localNotesStr) : [];
+    const updatedLocalNotes = localNotes.map(n => n.id === note.id ? note : n);
+    if (!updatedLocalNotes.some(n => n.id === note.id)) {
+      updatedLocalNotes.push(note);
+    }
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedLocalNotes));
+    setStickyNotes(updatedLocalNotes); // INSTANT reflect
+    console.log('✅ LOCAL + UI:', updatedLocalNotes.length);
+  } catch (localErr) {
+    console.error('❌ Local failed:', localErr);
+  }
+  
+  // 2. ALWAYS Supabase (w/ session if exists)
+  try {
+    const upsertData = {
+      id: note.id,
+      ...(userSession?.user && { user_id: userSession.user.id }), // RLS compliant
+      title: note.title,
+      content: note.content,
+      items: note.items || [],
+      updated_at: new Date().toISOString(),
+    };
+    
+    console.log('☁️ Upsert data:', upsertData);
+    const { data, error } = await supabase
+      .from('sticky_notes')
+      .upsert(upsertData, { onConflict: 'id' });
+    
+    if (error) {
+      console.error('☁️ Supabase ERROR:', error.message, error.code);
+    } else {
+      console.log('☁️ SUPABASE SUCCESS! Data:', data);
+    }
+  } catch (supabaseErr) {
+    console.error('☁️ Supabase CRASH:', supabaseErr);
+  }
+}, [userSession]);
+
+// Delete note from Supabase + local
+const deleteNoteFromSupabase = useCallback(async (noteId: string): Promise<void> => {
+
     if (!userSession?.user) {
       // Local fallback
       const notes = await loadNotes();
@@ -661,10 +700,11 @@ const saveNoteToSupabase = useCallback(async (note: StickyNote): Promise<void> =
 
 // Unified loadNotes (Supabase first)
   const loadNotes = useCallback(async (): Promise<StickyNote[]> => {
-    if (userSession?.user) {
-      return await loadNotesFromSupabase();
-    }
-    // Local fallback
+    // Always try Supabase first (anon gets [])
+    const notes = await loadNotesFromSupabase();
+    if (notes.length > 0) return notes;
+    
+    // Supabase fallback (RLS/anon)
     try {
       const storedNotes = await AsyncStorage.getItem(STORAGE_KEY);
       return storedNotes ? JSON.parse(storedNotes) : [];
@@ -672,7 +712,7 @@ const saveNoteToSupabase = useCallback(async (note: StickyNote): Promise<void> =
       console.error('Local load error:', error);
       return [];
     }
-  }, [userSession, loadNotesFromSupabase]);
+  }, [loadNotesFromSupabase]);
 
 // Reload notes when user changes
   useEffect(() => {
@@ -778,56 +818,59 @@ const saveNoteToSupabase = useCallback(async (note: StickyNote): Promise<void> =
     setActiveTab('write');
   };
 
-  const handleSaveNote = async () => {
-    if (!newNoteTitle.trim() && !newNoteContent.trim() && currentNote?.items.length === 0) {
-      Alert.alert("Error", "Please add some content to your note.");
-      return;
-    }
+const handleSaveNote = async () => {
+  console.log('✏️ handleSaveNote called');
+  if (!newNoteTitle.trim() && !newNoteContent.trim() && currentNote?.items.length === 0) {
+    Alert.alert("Error", "Please add some content to your note.");
+    return;
+  }
 
-    const now = new Date().toISOString();
+  const now = new Date().toISOString();
+  
+  if (currentNote) {
+    console.log('🔄 Updating note:', currentNote.id);
+    // Update existing note
+    const updatedNote: StickyNote = {
+      ...currentNote,
+      title: newNoteTitle || currentNote.title,
+      content: newNoteContent || currentNote.content,
+      updatedAt: now,
+    };
     
-    if (currentNote) {
-      // Update existing note
-      const updatedNote: StickyNote = {
-        ...currentNote,
-        title: newNoteTitle || currentNote.title,
-        content: newNoteContent || currentNote.content,
-        updatedAt: now,
-      };
-      
-      await saveNoteToSupabase(updatedNote);
-      
-      // Refresh notes list
-      const refreshedNotes = await loadNotes();
-      setStickyNotes(refreshedNotes);
-      
-      Alert.alert("Success", "Note updated successfully!");
-    } else {
-      // Create new note
-      const newNote: StickyNote = {
-        id: Date.now().toString(),
-        title: newNoteTitle || "Untitled Note",
-        content: newNoteContent,
-        items: [],
-        createdAt: now,
-        updatedAt: now,
-      };
-      
-      await saveNoteToSupabase(newNote);
-      
-      // Refresh notes list
-      const refreshedNotes = await loadNotes();
-      setStickyNotes(refreshedNotes);
-      
-      Alert.alert("Success", "Note saved successfully!");
-    }
+    await saveNoteToSupabase(updatedNote);
     
-    setIsCreatingNew(false);
-    setCurrentNote(null);
-    setNewNoteTitle("");
-    setNewNoteContent("");
-    setNewListItem("");
-  };
+    // Refresh notes list
+    const refreshedNotes = await loadNotes();
+    setStickyNotes(refreshedNotes);
+    
+    Alert.alert("Success", "Note updated successfully!");
+  } else {
+    console.log('➕ Creating new note');
+    // Create new note
+    const newNote: StickyNote = {
+      id: Date.now().toString(),
+      title: newNoteTitle || "Untitled Note",
+      content: newNoteContent,
+      items: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    
+    await saveNoteToSupabase(newNote);
+    
+    // Refresh notes list
+    const refreshedNotes = await loadNotes();
+    setStickyNotes(refreshedNotes);
+    
+    Alert.alert("Success", "Note saved successfully!");
+  }
+  
+  setIsCreatingNew(false);
+  setCurrentNote(null);
+  setNewNoteTitle("");
+  setNewNoteContent("");
+  setNewListItem("");
+};
 
   const handleAddListItem = () => {
     if (!newListItem.trim()) return;
@@ -1643,22 +1686,46 @@ data={dynamicCalorieData}
               </View>
             </View>
 
-            {/* Saved Notes Section */}
-            {stickyNotes.length > 0 && (
+{/* Saved Notes Section with Debug */}
               <View style={styles.savedNotesSection}>
+                <View style={styles.savedNotesHeader}>
+                  {/* Debug render log - moved to useEffect */}
                 <Text style={styles.savedNotesTitle}>Saved Notes</Text>
+<Pressable onPress={async () => {
+                  console.log('🖱️ REFRESH TAP ✅');
+                  console.log('🔄 Manual refresh - userSession:', userSession?.user?.id);
+                  try {
+                    const notes = await loadNotes();
+                    console.log('📝 Loaded notes:', notes.length, notes.slice(0,2));
+                    setStickyNotes(notes);
+                  } catch (e) {
+                    console.error('💥 Load notes error:', e);
+                  }
+                }} style={[styles.refreshButton, {backgroundColor: 'rgba(198,126,226,0.3)', borderRadius: 20, padding: 6}]}>
+                  <Icon name="refresh" size={18} color="#c67ee2" />
+                </Pressable>
+              </View>
+              
+              {notesLoading && <Text style={styles.loadingText}>Loading notes...</Text>}
+              {notesError && <Text style={styles.errorText}>Error: {notesError}</Text>}
+              {stickyNotes.length === 0 && !notesLoading && (
+                <Text style={styles.emptyNotesText}>No notes yet. Create your first note!</Text>
+              )}
+              
+              {stickyNotes.length > 0 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   {stickyNotes.slice(0, 5).map((note) => (
                     <Pressable key={note.id} style={styles.savedNoteCard} onPress={() => handleOpenNoteOverview(note)}>
                       <Text style={styles.savedNoteTitle} numberOfLines={1}>{note.title}</Text>
                       <Text style={styles.savedNoteContent} numberOfLines={2}>
-                        {note.content || (note.items.length > 0 ? `${note.items.length} items` : 'No content')}
+                        {note.content || (note.items?.length > 0 ? `${note.items.length} items` : 'No content')}
                       </Text>
                     </Pressable>
                   ))}
                 </ScrollView>
-              </View>
-            )}
+              )}
+            </View>
+
           </View>
         </View>
 
@@ -2099,6 +2166,26 @@ data={dynamicCalorieData}
 export default Dashboard
 
 const styles = StyleSheet.create({
+  savedNotesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  refreshButton: {
+    padding: 5,
+  },
+  loadingText: {
+    textAlign: 'center',
+    color: '#84d7f4',
+    fontSize: 14,
+  },
+  errorText: {
+    textAlign: 'center',
+    color: '#ff6b6b',
+    fontSize: 14,
+  },
+
   statisticsPressable: {
     position: 'absolute',
     bottom: 20,
