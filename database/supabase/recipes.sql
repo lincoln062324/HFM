@@ -8,10 +8,41 @@ CREATE TABLE IF NOT EXISTS recipes (
   ingredients TEXT[] NOT NULL,
   instructions TEXT[] NOT NULL,
   benefits TEXT NOT NULL,
-  is_favorite BOOLEAN DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Create foods table
+CREATE TABLE IF NOT EXISTS foods (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('fruits', 'vegetables', 'grains', 'protein', 'dairy')),
+  calories INTEGER NOT NULL,
+  benefits TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Enable RLS for foods
+ALTER TABLE foods ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public can read foods" ON foods FOR SELECT USING (true);
+
+-- Create meals table
+CREATE TABLE IF NOT EXISTS meals (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('weight_loss', 'muscle_gain', 'balanced', 'low_carb', 'high_protein')),
+  calories INTEGER NOT NULL,
+  benefits TEXT NOT NULL,
+  foods TEXT[] NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Enable RLS for meals
+ALTER TABLE meals ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public can read meals" ON meals FOR SELECT USING (true);
+
 
 -- Enable RLS
 ALTER TABLE recipes ENABLE ROW LEVEL SECURITY;

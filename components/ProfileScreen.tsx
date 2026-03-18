@@ -1,5 +1,5 @@
 // Profile Screen Component
-import { StyleSheet, Text, View, Image, ScrollView, Pressable, Dimensions } from "react-native";
+import { StyleSheet, Text, View, Image, ScrollView, Pressable, Dimensions, TextInput, Alert } from "react-native";
 import React, { useState, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Icon from "react-native-vector-icons/FontAwesome";
@@ -10,6 +10,7 @@ import { LineChart } from "react-native-gifted-charts";
 
 interface ProfileScreenProps {
   onClose: () => void;
+  onGoalUpdate?: (goal: number) => void;
 }
 
 // Mock user data
@@ -49,12 +50,14 @@ const USER_DATA = {
   ],
 };
 
-export default function ProfileScreen({ onClose }: ProfileScreenProps) {
+export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenProps) {
   const [dailyGoalAchieved, setDailyGoalAchieved] = useState(false);
   const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
   const [foodValue, setFoodValue] = useState(0);
   const [exerciseValue, setExerciseValue] = useState(0);
   const [totalProgress, setTotalProgress] = useState(0);
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [tempGoal, setTempGoal] = useState(2000);
 
   useEffect(() => {
     loadGoalStatus();
@@ -224,9 +227,54 @@ export default function ProfileScreen({ onClose }: ProfileScreenProps) {
             <Text style={styles.goalText}>
               {dailyGoalAchieved ? "✅ Goal Reached Today!" : "🎯 Keep going!"}
             </Text>
-            <Text style={styles.goalSubText}>
-              Current Goal: {dailyCalorieGoal} kcal | Progress: {totalProgress} kcal
-            </Text>
+            {editingGoal ? (
+              <View style={styles.goalInputRow}>
+                <TextInput
+                  style={styles.goalInput}
+                  value={tempGoal.toString()}
+                  onChangeText={(text) => setTempGoal(parseInt(text) || 2000)}
+                  keyboardType="numeric"
+                />
+                <Text style={styles.goalUnit}>kcal</Text>
+              </View>
+            ) : (
+              <Text style={styles.goalSubText}>
+                Current Goal: {dailyCalorieGoal} kcal | Progress: {totalProgress} kcal
+              </Text>
+            )}
+            <View style={styles.goalButtons}>
+              {editingGoal ? (
+                <>
+                  <Pressable style={styles.saveButton} onPress={async () => {
+                    try {
+                      await AsyncStorage.setItem('@dailyCalorieGoal', tempGoal.toString());
+                      setDailyCalorieGoal(tempGoal);
+                      setEditingGoal(false);
+                      onGoalUpdate?.(tempGoal);
+                      Alert.alert('Success', 'Daily goal updated!');
+                    } catch (error) {
+                      console.log('Error saving goal:', error);
+                      Alert.alert('Error', 'Failed to save goal');
+                    }
+                  }}>
+                    <Text style={styles.saveButtonText}>Save</Text>
+                  </Pressable>
+                  <Pressable style={styles.cancelButton} onPress={() => {
+                    setEditingGoal(false);
+                    setTempGoal(dailyCalorieGoal);
+                  }}>
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <Pressable style={styles.editGoalButton} onPress={() => {
+                  setEditingGoal(true);
+                  setTempGoal(dailyCalorieGoal);
+                }}>
+                  <Text style={styles.editGoalText}>Edit Goal</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
         </View>
 
@@ -259,6 +307,69 @@ const styles = StyleSheet.create({
     color: '#CCCCCC',
     textAlign: 'center',
     marginTop: 5,
+  },
+  goalInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 10,
+  },
+  goalInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    fontSize: 20,
+    width: 100,
+    textAlign: 'center',
+    marginRight: 10,
+  },
+  goalUnit: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  goalButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  saveButton: {
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    flex: 1,
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#666',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    flex: 1,
+  },
+  cancelButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  editGoalButton: {
+    backgroundColor: '#c67ee2',
+    paddingHorizontal: 30,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  editGoalText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 16,
+    textAlign: 'center',
   },
   container: {
     position: "absolute",

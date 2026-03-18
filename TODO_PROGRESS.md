@@ -1,17 +1,1 @@
-# Goal Reached Notification Modal - Progress Tracking
-
-## Completed (6/7)
-- [x] 1. Add dynamic goal state/load/save to dashboard.tsx (AsyncStorage @dailyCalorieGoal)
-- [x] 2. Update dashboard calculations to use dynamic goal
-- [x] 3. Add showGoalReachedModal state + daily flag (@goalReachedToday)
-- [x] 4. Implement GoalReachedModal JSX/animations (copy existing patterns, random quotes)
-- [x] 5. Add trigger logic after saveFoodValue/saveExerciseValue
-
-## Remaining (2/7)
-- [x] 6. Update GoalsScreen.tsx: Add goal slider/input + save callback
-- [ ] 7. Test: Set goal, reach via adds, verify modal + daily reset
-- [ ] Post-edit: Update ProfileScreen dailyGoalAchieved dynamically
-
-**Status:** Steps 1-5 completed in dashboard.tsx
-
-**Next Step:** Test feature + ProfileScreen dynamic display (step 7)
+# Supabase Sticky Notes Migration Progress&#10;&#10;✅ Table `sticky_notes` created + RLS policy&#10;✅ Supabase CRUD handlers in dashboard.tsx&#10;✅ Local AsyncStorage fallback&#10;&#10;❌ **Issue**: Seeds not visible (user_id mismatch)&#10;&#10;**Remaining Steps**:&#10;[ ] 1. Update seed.notes.sql → use `auth.uid()`&#10;[ ] 2. Add debug console.logs to dashboard.tsx&#10;[ ] 3. Run updated seed in Supabase SQL Editor&#10;[ ] 4. Test: Login → notes appear + save/fetch works&#10;[ ] 5. Remove debug logs&#10;&#10;**Status**: Step 1 → updating seed script

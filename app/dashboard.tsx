@@ -1,11 +1,12 @@
 // Dashboard Component with Navigation
 import { StyleSheet, Text, View, Image, ScrollView, Animated, Dimensions, Pressable, TextInput, Alert, useWindowDimensions, useColorScheme } from "react-native";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "react-native-vector-icons/FontAwesome";
 import Icon2 from "react-native-vector-icons/FontAwesome5";
 import { PieChart } from "react-native-gifted-charts";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import supabase from '../lib/supabase';
+import type { Session } from '@supabase/supabase-js';
 
 
 
@@ -109,24 +110,7 @@ const STORAGE_KEY = "@sticky_notes";
 const FOOD_ENTRIES_KEY = "@food_entries";
 
 // Storage Utility Functions
-const saveNotes = async (notes: StickyNote[]): Promise<void> => {
-  try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
-  } catch (error) {
-    console.error("Error saving notes:", error);
-    Alert.alert("Error", "Failed to save notes.");
-  }
-};
-
-const loadNotes = async (): Promise<StickyNote[]> => {
-  try {
-    const storedNotes = await AsyncStorage.getItem(STORAGE_KEY);
-    return storedNotes ? JSON.parse(storedNotes) : [];
-  } catch (error) {
-    console.error("Error loading notes:", error);
-    return [];
-  }
-};
+// REMOVED: saveNotes and loadNotes - now using Supabase functions with local fallbacks
 
 // Food Entry Storage Functions
 const saveFoodEntries = async (entries: FoodEntry[]): Promise<void> => {
@@ -158,6 +142,7 @@ import RemindersScreen, { HabitReminder } from "../components/RemindersScreen";
 import SettingsScreen from "../components/SettingsScreen";
 import CameraScreen from "../components/CameraScreen";
 import ExerciseScreen from "../components/ExerciseScreen";
+import GoalReachedModal from "./GoalReachedModal";
 
 
 // Reminder types (matching RemindersScreen)
@@ -343,7 +328,11 @@ const sidebarAnimation = useRef(new Animated.Value(-Dimensions.get('window').wid
 const [foodValue, setFoodValue] = useState(0);
 const [exerciseValue, setExerciseValue] = useState(0);
 const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
+
+const totalProgress = foodValue + exerciseValue;
+
   const [showGoalReachedModal, setShowGoalReachedModal] = useState(false);
+  const [showGoalReachedNotification, setShowGoalReachedNotification] = useState(false);
   const [goalReachedToday, setGoalReachedToday] = useState(false);
   const [selectedQuote, setSelectedQuote] = useState('');
 
@@ -375,12 +364,18 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
         if (exercise !== null) setExerciseValue(parseInt(exercise));
         if (goal !== null) setDailyCalorieGoal(parseInt(goal));
         
-        // Reset daily flag if new day
+// Reset daily flag if new day
         if (savedDate !== today) {
           setGoalReachedToday(false);
           await AsyncStorage.multiRemove(['@goalReachedToday', '@goalReachedDate']);
         } else if (todayFlag === 'true') {
           setGoalReachedToday(true);
+        }
+        
+        // Clear reset timestamp if new day
+        const resetTimestamp = await AsyncStorage.getItem('@dailyResetTimestamp');
+        if (resetTimestamp !== today) {
+          await AsyncStorage.removeItem('@dailyResetTimestamp');
         }
       } catch (error) {
         console.log('Error loading values:', error);
@@ -389,7 +384,10 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
     loadValues();
   }, []);
 
-  // Save values when changed + check goal reached
+  // Check if goal is reached (totalProgress >= dailyCalorieGoal)
+  const isGoalReached = totalProgress >= dailyCalorieGoal;
+
+  // Save values when changed + check goal reached (only show modal once per day when exactly reaching)
   const checkGoalReached = async (newTotalProgress: number) => {
     if (goalReachedToday || newTotalProgress < dailyCalorieGoal) return;
 
@@ -405,6 +403,13 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
         ['@goalReachedDate', today]
       ]);
     }
+  };
+
+  // Show notification for goal reached (can show multiple times if already reached)
+  const showGoalReachedAlert = () => {
+    if (!isGoalReached) return;
+    setSelectedQuote(MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)]);
+    setShowGoalReachedNotification(true);
   };
 
   const saveFoodValue = async (addedCalories: number) => {
@@ -433,6 +438,33 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
     }
   };
 
+
+  const resetDailyCounts = () => {
+    Alert.alert(
+      "Reset Daily Counts",
+      "Reset food and exercise to 0?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Reset", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setFoodValue(0);
+              setExerciseValue(0);
+              setGoalReachedToday(false);
+              await AsyncStorage.multiRemove(['@foodValue', '@exerciseValue', '@goalReachedToday', '@goalReachedDate']);
+              Alert.alert("Success", "Daily counts reset to 0!");
+            } catch (error) {
+              console.error('Reset error:', error);
+              Alert.alert("Error", "Failed to reset counts.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const updateDailyGoal = async (newGoal: number) => {
     setDailyCalorieGoal(newGoal);
     try {
@@ -444,10 +476,14 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [isHabitModalVisible, setIsHabitModalVisible] = useState(false);
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
-  const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(false);
+const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(false);
   const [reminderTime, setReminderTime] = useState('08:00');
   const [reminderDate, setReminderDate] = useState(new Date().toISOString().split('T')[0]);
   const [repeatOption, setRepeatOption] = useState('Daily');
+  // Auth state
+  const [userSession, setUserSession] = useState<Session | null>(null);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
   // Sticky Notes State
   const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
   const [isStickyNoteModalVisible, setIsStickyNoteModalVisible] = useState(false);
@@ -514,14 +550,138 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
     ]).start(() => setShowStatisticsModal(false));
   };
 
-  // Load notes on mount
+// Auth listener
   useEffect(() => {
-    const fetchNotes = async () => {
+supabase.auth.getSession().then(({ data: { session } }) => {
+      setUserSession(session);
+      console.log('🔑 Initial session:', session?.user?.id || 'NO USER');
+    });
+
+
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserSession(session);
+      console.log('🔄 Auth change:', session?.user?.id || 'NO USER');
+    });
+
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+// Load notes from Supabase (user-specific)
+const loadNotesFromSupabase = useCallback(async (): Promise<StickyNote[]> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      setNotesLoading(true);
+      const { data, error } = await supabase
+        .from('sticky_notes')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false });
+      setNotesLoading(false);
+      if (error) throw error;
+      return (data || []).map((dbNote: any): StickyNote => ({
+        id: dbNote.id,
+        title: dbNote.title || 'Untitled Note',
+        content: dbNote.content || '',
+        items: dbNote.items || [],
+        createdAt: dbNote.created_at,
+        updatedAt: dbNote.updated_at,
+      }));
+    }
+    return [];
+  } catch (error: any) {
+    console.error('Supabase notes error:', error);
+    setNotesError(error.message || 'Failed to load notes');
+    setNotesLoading(false);
+    return [];
+  }
+}, []);
+
+// Save single note to Supabase
+const saveNoteToSupabase = useCallback(async (note: StickyNote): Promise<void> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { error } = await supabase
+        .from('sticky_notes')
+        .upsert({
+          id: note.id,
+          user_id: user.id,
+          title: note.title,
+          content: note.content,
+          items: note.items,
+          updated_at: new Date().toISOString(),
+        });
+      if (error) throw error;
+    } else {
+      // Anon/guest mode - use device ID or local only
+      console.log('Guest mode - local save only');
+    }
+  } catch (error: any) {
+    console.error('Save note error:', error);
+    setNotesError(error.message || 'Failed to save note');
+    // Always local fallback
+    const notes = await loadNotes();
+    const updatedNotes = notes.map(n => n.id === note.id ? note : n);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedNotes));
+  }
+}, []);
+
+// Delete note from Supabase
+  const deleteNoteFromSupabase = useCallback(async (noteId: string): Promise<void> => {
+    if (!userSession?.user) {
+      // Local fallback
+      const notes = await loadNotes();
+      const updatedNotes = notes.filter(n => n.id !== noteId);
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedNotes));
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('sticky_notes')
+        .delete()
+        .eq('id', noteId)
+        .eq('user_id', userSession.user.id);
+
+      if (error) throw error;
+    } catch (error: any) {
+      console.error('Delete note error:', error);
+      setNotesError(error.message || 'Failed to delete note');
+      // Local fallback
+      const notes = await loadNotes();
+      const updatedNotes = notes.filter(n => n.id !== noteId);
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedNotes));
+    }
+  }, [userSession]);
+
+// Unified loadNotes (Supabase first)
+  const loadNotes = useCallback(async (): Promise<StickyNote[]> => {
+    if (userSession?.user) {
+      return await loadNotesFromSupabase();
+    }
+    // Local fallback
+    try {
+      const storedNotes = await AsyncStorage.getItem(STORAGE_KEY);
+      return storedNotes ? JSON.parse(storedNotes) : [];
+    } catch (error) {
+      console.error('Local load error:', error);
+      return [];
+    }
+  }, [userSession, loadNotesFromSupabase]);
+
+// Reload notes when user changes
+  useEffect(() => {
+    const reloadNotes = async () => {
       const notes = await loadNotes();
       setStickyNotes(notes);
     };
-    fetchNotes();
-  }, []);
+    reloadNotes();
+  }, [userSession, loadNotes]);
 
   // Handle sticky note modal visibility
   useEffect(() => {
@@ -635,11 +795,12 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
         updatedAt: now,
       };
       
-      const updatedNotes = stickyNotes.map(note => 
-        note.id === currentNote.id ? updatedNote : note
-      );
-      setStickyNotes(updatedNotes);
-      await saveNotes(updatedNotes);
+      await saveNoteToSupabase(updatedNote);
+      
+      // Refresh notes list
+      const refreshedNotes = await loadNotes();
+      setStickyNotes(refreshedNotes);
+      
       Alert.alert("Success", "Note updated successfully!");
     } else {
       // Create new note
@@ -652,9 +813,12 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
         updatedAt: now,
       };
       
-      const updatedNotes = [...stickyNotes, newNote];
-      setStickyNotes(updatedNotes);
-      await saveNotes(updatedNotes);
+      await saveNoteToSupabase(newNote);
+      
+      // Refresh notes list
+      const refreshedNotes = await loadNotes();
+      setStickyNotes(refreshedNotes);
+      
       Alert.alert("Success", "Note saved successfully!");
     }
     
@@ -697,14 +861,19 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
       const updatedItems = currentNote.items.map(item =>
         item.id === itemId ? { ...item, checked: !item.checked } : item
       );
-      setCurrentNote({ ...currentNote, items: updatedItems });
-
-      // Also update in stickyNotes array
-      const updatedNotes = stickyNotes.map(note =>
-        note.id === currentNote.id ? { ...note, items: updatedItems, updatedAt: new Date().toISOString() } : note
-      );
-      setStickyNotes(updatedNotes);
-      await saveNotes(updatedNotes);
+      
+      const updatedNote: StickyNote = {
+        ...currentNote,
+        items: updatedItems,
+        updatedAt: new Date().toISOString()
+      };
+      
+      setCurrentNote(updatedNote);
+      await saveNoteToSupabase(updatedNote);
+      
+      // Refresh notes list
+      const refreshedNotes = await loadNotes();
+      setStickyNotes(refreshedNotes);
     }
   };
 
@@ -718,9 +887,12 @@ const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            const updatedNotes = stickyNotes.filter(note => note.id !== noteId);
-            setStickyNotes(updatedNotes);
-            await saveNotes(updatedNotes);
+            await deleteNoteFromSupabase(noteId);
+            
+            // Refresh notes list
+            const refreshedNotes = await loadNotes();
+            setStickyNotes(refreshedNotes);
+            
             if (currentNote?.id === noteId) {
               setCurrentNote(null);
               setNewNoteTitle("");
@@ -1011,9 +1183,6 @@ const handleCreateHabit = async () => {
     Alert.alert('Success', `Habit "${selectedHabit.name}" added to Supabase!`);
   };
 
-
-
-const totalProgress = foodValue + exerciseValue;
   const hasProgress = foodValue > 0 || exerciseValue > 0;
   const remainingCalories = hasProgress ? Math.max(0, dailyCalorieGoal - totalProgress) : dailyCalorieGoal;
   const remainingColor = hasProgress ? CALORIE_CHART_CONFIG.remaining.color : CALORIE_CHART_CONFIG.base.color;
@@ -1089,7 +1258,6 @@ const navigateToRecipes = () => {
       Animated.timing(screenScale, { toValue: 0.8, duration: 200, useNativeDriver: true }),
       Animated.timing(screenOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
     ]).start(() => {
-      sidebarAnimation.setValue(-Dimensions.get('window').width * 0.7);
       screenBackdrop.setValue(0);
       screenScale.setValue(0.8);
       screenOpacity.setValue(0);
@@ -1102,7 +1270,6 @@ const navigateToRecipes = () => {
       Animated.timing(screenScale, { toValue: 0.8, duration: 200, useNativeDriver: true }),
       Animated.timing(screenOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
     ]).start(() => {
-      sidebarAnimation.setValue(-Dimensions.get('window').width * 0.7);
       screenBackdrop.setValue(0);
       screenScale.setValue(0.8);
       screenOpacity.setValue(0);
@@ -1115,7 +1282,6 @@ const navigateToRecipes = () => {
       Animated.timing(screenScale, { toValue: 0.8, duration: 200, useNativeDriver: true }),
       Animated.timing(screenOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
     ]).start(() => {
-      sidebarAnimation.setValue(-Dimensions.get('window').width * 0.7);
       screenBackdrop.setValue(0);
       screenScale.setValue(0.8);
       screenOpacity.setValue(0);
@@ -1235,7 +1401,7 @@ const navigateToRecipes = () => {
           }} />
         </Animated.View>
         <Animated.View style={[styles.screenContent, { transform: [{ scale: screenScale }] }]}>
-          {showProfileScreen && <ProfileScreen onClose={handleCloseProfile} />}
+{showProfileScreen && <ProfileScreen onClose={handleCloseProfile} onGoalUpdate={updateDailyGoal} />}
           {showWeeklyReportScreen && <WeeklyReportScreen onClose={handleCloseWeeklyReport} />}
 {showGoalsScreen && <GoalsScreen onClose={handleCloseGoals} onGoalUpdate={updateDailyGoal} />}
           {showExerciseScreen && <ExerciseScreen onClose={handleCloseExercise} onExerciseBurned={saveExerciseValue} />}
@@ -1353,13 +1519,14 @@ data={dynamicCalorieData}
               />
             </View>
             <Pressable style={styles.statisticsPressable} onPress={() => setShowStatisticsModal(true)}>
-              <View style={styles.statisticsContainer}>
+<View style={styles.statisticsContainer}>
                 <Icon style={styles.icon3} name="circle" />
                 <Icon style={styles.icon33} name="circle" />
                 <View style={styles.BG}>
                   <Text style={styles.statisticsText}>Basic Goal</Text>
-<Text style={styles.numB}>{dailyCalorieGoal}</Text>
+                  <Text style={styles.numB}>{dailyCalorieGoal}</Text>
                 </View>
+                
                 <Icon style={styles.icon4} name="circle" />
                 <Icon style={styles.icon44} name="circle" />
                 <View style={styles.F}>
@@ -1407,26 +1574,60 @@ data={dynamicCalorieData}
                     </View>
                     <View style={styles.progressButtons}>
                       <Pressable 
-                        style={styles.actionButtonf} 
+                        style={[
+                          styles.actionButtonf, 
+                          isGoalReached && { opacity: 0.5 }
+                        ]} 
+                        disabled={isGoalReached}
                         onPress={() => {
-                        closeStatisticsModal();
-                        navigateToRecipes();
-
+                          if (isGoalReached) {
+                            showGoalReachedAlert();
+                          } else {
+                            closeStatisticsModal();
+                            navigateToRecipes();
+                          }
                         }}
                       >
                         <Icon2 name="utensils" size={14} color="#FFFFFF" />
                         <Text style={styles.actionButtonText}>Add Food</Text>
                       </Pressable>
                       <Pressable 
-                        style={styles.actionButtone} 
+                        style={[
+                          styles.actionButtone, 
+                          isGoalReached && { opacity: 0.5 }
+                        ]} 
+                        disabled={isGoalReached}
                         onPress={() => {
-                        closeStatisticsModal();
-                        navigateToExercise();
-
+                          if (isGoalReached) {
+                            showGoalReachedAlert();
+                          } else {
+                            closeStatisticsModal();
+                            navigateToExercise();
+                          }
                         }}
                       >
                         <Icon2 name="dumbbell" size={14} color="#FFFFFF" />
                         <Text style={styles.actionButtonText}>Add Exercise</Text>
+                      </Pressable>
+                      <Pressable 
+                        style={styles.actionButtonr} 
+                        onPress={() => {
+                          closeStatisticsModal();
+                          resetDailyCounts();
+                        }}
+                      >
+                        <Icon name="refresh" size={14} color="#FFFFFF" />
+                        <Text style={styles.actionButtonText}>Reset Today</Text>
+                      </Pressable>
+                      <Pressable 
+                        style={styles.actionButtong}
+                        onPress={() => {
+                          closeStatisticsModal();
+                          navigateToGoals();
+                        }}
+                      >
+                        <Icon name="edit" size={14} color="#FFFFFF"/>
+                        <Text style={styles.actionButtonText}>Set Goal</Text>
                       </Pressable>
                     </View>
                   </View>
@@ -1624,7 +1825,6 @@ data={dynamicCalorieData}
                 updatedNotes = [...stickyNotes, updatedNote];
               }
               setStickyNotes(updatedNotes);
-              saveNotes(updatedNotes);
             } else if (!currentNote && (newNoteTitle.trim() || newNoteContent.trim())) {
               const now = new Date().toISOString();
               const newNote: StickyNote = { 
@@ -1637,7 +1837,6 @@ data={dynamicCalorieData}
               };
               const updatedNotes = [...stickyNotes, newNote];
               setStickyNotes(updatedNotes);
-              saveNotes(updatedNotes);
             }
             animateStickyNoteModalOut(() => { setIsStickyNoteModalVisible(false); setCurrentNote(null); setIsCreatingNew(false); });
           }} />
@@ -1786,7 +1985,6 @@ data={dynamicCalorieData}
                   }
                   
                   setStickyNotes(updatedNotes);
-                  await saveNotes(updatedNotes);
                 };
                 saveBeforeClose();
               } else if (!currentNote && (newNoteTitle.trim() || newNoteContent.trim())) {
@@ -1804,7 +2002,6 @@ data={dynamicCalorieData}
                   
                   const updatedNotes = [...stickyNotes, newNote];
                   setStickyNotes(updatedNotes);
-                  await saveNotes(updatedNotes);
                 };
                 saveNewNote();
               }
@@ -1883,7 +2080,18 @@ data={dynamicCalorieData}
       )}
 
       {/* Render the screen overlay for navigation - THIS IS THE FIX */}
-      {renderScreenOverlay()}
+{renderScreenOverlay()}
+
+      {/* Goal Reached Modal */}
+      <GoalReachedModal 
+        visible={showGoalReachedModal || showGoalReachedNotification} 
+        quote={selectedQuote} 
+        onClose={() => {
+          setShowGoalReachedModal(false);
+          setShowGoalReachedNotification(false);
+        }}
+        themeColors={currentThemeColors} 
+      />
     </View>
   );
 }
@@ -1976,11 +2184,44 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 10,
   },
+  actionButtonr: {
+    position: 'absolute',
+    top: 60,
+    width: 115,
+    height: 45,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f34141',
+    padding: 15,
+    borderRadius: 10,
+  },
+  actionButtong: {
+    position: 'absolute',
+    top: 60,
+    left: 123,
+    width: 115,
+    height: 45,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#999999',
+    padding: 15,
+    borderRadius: 10,
+  },
   actionButtonText: {
     fontSize: 14,
     fontWeight: 'bold',
     color: '#FFFFFF',
     marginLeft: 8,
+  },
+  actionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 10,
   },
   scrollView: {
     flex: 1,
@@ -2485,12 +2726,12 @@ const styles = StyleSheet.create({
   },
   animatedModalContent: {
     position: 'relative',
-    top: 85,
+    top: 120,
     backgroundColor: "#2c2c2c",
     borderRadius: 15,
     padding: 20,
     width: "85%",
-    height: 430,
+    height: 490,
   },
   modalTitle: {
     fontSize: 24,

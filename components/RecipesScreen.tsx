@@ -1,24 +1,21 @@
-// Recipes Screen Component - Recipes, Meals & Foods
+// Recipes Screen Component - Recipes, Meals & Foods (Supabase-powered like ExerciseScreen)
 import { StyleSheet, Text, View, ScrollView, Pressable, Alert } from "react-native";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Icon from "react-native-vector-icons/FontAwesome6";
 import Icon2 from "react-native-vector-icons/Ionicons";
 import Icon3 from "react-native-vector-icons/FontAwesome5";
 import supabase from '../lib/supabase';
 
-// Types
 interface FoodItem {
-  id: number;
+  id: string;
   name: string;
   category: string;
   calories: number;
   benefits: string;
-  image?: any;
-  isFavorite: boolean;
 }
 
 interface Recipe {
-  id: number;
+  id: string;
   name: string;
   category: string;
   calories: number;
@@ -26,17 +23,15 @@ interface Recipe {
   ingredients: string[];
   instructions: string[];
   benefits: string;
-  isFavorite: boolean;
 }
 
 interface MealSuggestion {
-  id: number;
+  id: string;
   name: string;
   category: string;
   calories: number;
   benefits: string;
   foods: string[];
-  isFavorite: boolean;
 }
 
 // Recipe Categories
@@ -49,7 +44,6 @@ const RECIPE_CATEGORIES = [
   { id: 'desserts', name: 'Desserts', icon: 'birthday-cake' },
 ];
 
-// Meal Categories
 const MEAL_CATEGORIES = [
   { id: 'all', name: 'All', icon: 'th' },
   { id: 'weight_loss', name: 'Weight Loss', icon: 'arrow-down' },
@@ -59,7 +53,6 @@ const MEAL_CATEGORIES = [
   { id: 'high_protein', name: 'High Protein', icon: 'fire' },
 ];
 
-// Food Categories
 const FOOD_CATEGORIES = [
   { id: 'all', name: 'All', icon: 'th' },
   { id: 'fruits', name: 'Fruits', icon: 'apple-alt' },
@@ -69,208 +62,7 @@ const FOOD_CATEGORIES = [
   { id: 'dairy', name: 'Dairy', icon: 'cheese' },
 ];
 
-// Recipe Database with Ingredients
-const RECIPE_DATABASE: Recipe[] = [
-  { id: 1, name: 'Oatmeal with Berries', category: 'breakfast', calories: 350, prepTime: '10 min', 
-    ingredients: ['1 cup rolled oats', '1 cup almond milk', '1/2 cup mixed berries', '1 tbsp honey', '1/4 cup almonds'],
-    instructions: ['Cook oats with almond milk', 'Top with berries and almonds', 'Drizzle with honey'],
-    benefits: 'High in fiber, supports heart health, provides sustained energy throughout the morning.',
-    isFavorite: false },
-  { id: 2, name: 'Egg White Scramble', category: 'breakfast', calories: 200, prepTime: '15 min',
-    ingredients: ['4 egg whites', '1/4 cup spinach', '1/4 cup mushrooms', '1/4 cup tomatoes', 'Salt and pepper'],
-    instructions: ['Whisk egg whites', 'Sauté vegetables', 'Combine and scramble', 'Season to taste'],
-    benefits: 'Low in calories, high in protein, supports muscle maintenance.',
-    isFavorite: false },
-  { id: 3, name: 'Greek Yogurt Parfait', category: 'breakfast', calories: 280, prepTime: '5 min',
-    ingredients: ['1 cup Greek yogurt', '1/2 cup granola', '1/2 cup fresh fruits', '1 tbsp honey'],
-    instructions: ['Layer yogurt in a glass', 'Add granola layer', 'Top with fruits', 'Drizzle honey'],
-    benefits: 'Rich in probiotics, calcium, and protein for gut health.',
-    isFavorite: false },
-  { id: 4, name: 'Avocado Toast', category: 'breakfast', calories: 320, prepTime: '10 min',
-    ingredients: ['2 slices whole wheat bread', '1 avocado', '2 eggs', 'Salt, pepper, red pepper flakes'],
-    instructions: ['Toast bread', 'Mash avocado with salt', 'Spread on toast', 'Top with poached eggs'],
-    benefits: 'Healthy fats, fiber, and protein for a balanced breakfast.',
-    isFavorite: false },
-  { id: 5, name: 'Grilled Chicken Salad', category: 'lunch', calories: 420, prepTime: '25 min',
-    ingredients: ['6 oz chicken breast', '2 cups mixed greens', '1/2 cucumber', '1/2 tomatoes', '2 tbsp olive oil dressing'],
-    instructions: ['Grill chicken breast', 'Prepare vegetables', 'Combine in bowl', 'Drizzle with dressing'],
-    benefits: 'High protein, low carbs, supports muscle building and satiety.',
-    isFavorite: false },
-  { id: 6, name: 'Quinoa Buddha Bowl', category: 'lunch', calories: 480, prepTime: '30 min',
-    ingredients: ['1 cup quinoa', '1/2 cup chickpeas', '1/2 avocado', '1/2 cup roasted vegetables', 'Tahini dressing'],
-    instructions: ['Cook quinoa', 'Roast vegetables', 'Assemble bowl', 'Add tahini dressing'],
-    benefits: 'Complete protein, fiber-rich, supports digestive health.',
-    isFavorite: false },
-  { id: 7, name: 'Turkey Wrap', category: 'lunch', calories: 350, prepTime: '15 min',
-    ingredients: ['4 oz turkey breast', '1 whole wheat wrap', '1 slice cheese', 'Lettuce', 'Tomato', 'Mustard'],
-    instructions: ['Lay out wrap', 'Add turkey and cheese', 'Add vegetables', 'Roll tightly'],
-    benefits: 'Lean protein, complex carbs, satisfying and nutritious.',
-    isFavorite: false },
-  { id: 8, name: 'Salmon Poke Bowl', category: 'lunch', calories: 520, prepTime: '20 min',
-    ingredients: ['5 oz salmon', '1 cup rice', '1/2 avocado', 'Edamame', 'Cucumber', 'Soy sauce'],
-    instructions: ['Cook rice', 'Cube salmon', 'Prepare vegetables', 'Assemble bowl', 'Drizzle soy sauce'],
-    benefits: 'Omega-3 fatty acids, high protein, supports brain health.',
-    isFavorite: false },
-  { id: 9, name: 'Baked Salmon with Vegetables', category: 'dinner', calories: 450, prepTime: '35 min',
-    ingredients: ['6 oz salmon fillet', '1 cup broccoli', '1 cup carrots', '2 tbsp olive oil', 'Lemon', 'Garlic'],
-    instructions: ['Preheat oven', 'Season salmon', 'Arrange vegetables', 'Bake at 400°F for 25 min'],
-    benefits: 'Heart-healthy omega-3s, anti-inflammatory, rich in vitamins.',
-    isFavorite: false },
-  { id: 10, name: 'Chicken Stir Fry', category: 'dinner', calories: 380, prepTime: '25 min',
-    ingredients: ['6 oz chicken breast', '2 cups mixed vegetables', '2 tbsp soy sauce', '1 tbsp sesame oil', 'Ginger', 'Garlic'],
-    instructions: ['Cut chicken into strips', 'Stir fry vegetables', 'Add chicken', 'Season with sauces'],
-    benefits: 'High protein, low fat, quick and easy meal option.',
-    isFavorite: false },
-  { id: 11, name: 'Beef and Broccoli', category: 'dinner', calories: 520, prepTime: '30 min',
-    ingredients: ['6 oz beef sirloin', '2 cups broccoli', '2 tbsp soy sauce', '1 tbsp oyster sauce', 'Garlic'],
-    instructions: ['Slice beef thinly', 'Stir fry beef', 'Add broccoli', 'Add sauces and simmer'],
-    benefits: 'High iron, protein-rich, supports blood health.',
-    isFavorite: false },
-  { id: 12, name: 'Vegetable Pasta', category: 'dinner', calories: 420, prepTime: '25 min',
-    ingredients: ['2 oz whole wheat pasta', '2 cups vegetables', '2 tbsp olive oil', 'Parmesan cheese', 'Italian herbs'],
-    instructions: ['Cook pasta', 'Sauté vegetables', 'Toss together', 'Top with cheese'],
-    benefits: 'Complex carbs, fiber, and antioxidants.',
-    isFavorite: false },
-  { id: 13, name: 'Mixed Nuts', category: 'snacks', calories: 180, prepTime: '0 min',
-    ingredients: ['1 oz almonds', '1 oz walnuts', '1 oz cashews'],
-    instructions: ['Combine nuts in a small container', 'Portion into servings'],
-    benefits: 'Healthy fats, protein, and minerals for energy.',
-    isFavorite: false },
-  { id: 14, name: 'Apple with Peanut Butter', category: 'snacks', calories: 200, prepTime: '2 min',
-    ingredients: ['1 medium apple', '2 tbsp peanut butter'],
-    instructions: ['Slice apple', 'Serve with peanut butter'],
-    benefits: 'Fiber, protein, and natural sugars for quick energy.',
-    isFavorite: false },
-  { id: 15, name: 'Protein Smoothie', category: 'snacks', calories: 250, prepTime: '5 min',
-    ingredients: ['1 scoop protein powder', '1 banana', '1 cup almond milk', 'Ice'],
-    instructions: ['Add all ingredients to blender', 'Blend until smooth'],
-    benefits: 'Quick protein, post-workout recovery, convenient nutrition.',
-    isFavorite: false },
-  { id: 16, name: 'Dark Chocolate', category: 'desserts', calories: 170, prepTime: '0 min',
-    ingredients: ['1 oz dark chocolate (70%+)'],
-    instructions: ['Enjoy in moderation'],
-    benefits: 'Antioxidants, may improve heart health, satisfies cravings.',
-    isFavorite: false },
-  { id: 17, name: 'Frozen Banana Bites', category: 'desserts', calories: 120, prepTime: '10 min',
-    ingredients: ['1 banana', '2 tbsp dark chocolate chips', '1 tbsp crushed nuts'],
-    instructions: ['Slice banana', 'Dip in chocolate', 'Top with nuts', 'Freeze for 2 hours'],
-    benefits: 'Natural sweetness, potassium, guilt-free treat.',
-    isFavorite: false },
-  { id: 18, name: 'Chia Pudding', category: 'desserts', calories: 200, prepTime: '5 min',
-    ingredients: ['3 tbsp chia seeds', '1 cup coconut milk', '1 tbsp maple syrup', 'Fresh fruits'],
-    instructions: ['Mix chia seeds with milk', 'Add maple syrup', 'Refrigerate overnight', 'Top with fruits'],
-    benefits: 'Omega-3s, fiber, supports digestive health.',
-    isFavorite: false },
-];
-
-// Meal Suggestions Database
-const MEAL_DATABASE: MealSuggestion[] = [
-  { id: 1, name: 'Green Smoothie Bowl', category: 'weight_loss', calories: 280, 
-    benefits: 'Low calorie, high fiber, detoxifying. Supports weight loss with nutrient-dense ingredients that keep you full longer.',
-    foods: ['Spinach', 'Cucumber', 'Green apple', 'Celery', 'Protein powder'],
-    isFavorite: false },
-  { id: 2, name: 'Cauliflower Rice Bowl', category: 'weight_loss', calories: 320,
-    benefits: 'Low carb alternative to rice, high in vitamins C and K. Supports fat loss while providing essential nutrients.',
-    foods: ['Cauliflower', 'Grilled chicken', 'Vegetables', 'Low-sodium soy sauce'],
-    isFavorite: false },
-  { id: 3, name: 'Zucchini Noodles', category: 'weight_loss', calories: 250,
-    benefits: 'Very low calories, high water content, gluten-free. Satisfying without the carb overload.',
-    foods: ['Zucchini', 'Turkey meatballs', 'Marinara sauce', 'Parmesan'],
-    isFavorite: false },
-  { id: 4, name: 'Grilled Fish Tacos', category: 'weight_loss', calories: 340,
-    benefits: 'High protein, healthy fats, fresh toppings. Satisfying Mexican-inspired meal under 400 calories.',
-    foods: ['White fish', 'Corn tortillas', 'Cabbage', 'Lime', 'Cilantro'],
-    isFavorite: false },
-  { id: 5, name: 'Mass Gainer Shake', category: 'muscle_gain', calories: 650,
-    benefits: 'High protein and calorie content for muscle building. Contains fast and slow-digesting proteins.',
-    foods: ['Protein powder', 'Banana', 'Oats', 'Peanut butter', 'Whole milk'],
-    isFavorite: false },
-  { id: 6, name: 'Beef Steak Dinner', category: 'muscle_gain', calories: 720,
-    benefits: 'Complete protein with iron and zinc. Essential for muscle repair and growth after intense workouts.',
-    foods: ['8 oz ribeye steak', 'Sweet potato', 'Asparagus', 'Butter'],
-    isFavorite: false },
-  { id: 7, name: 'Chicken Rice Bowl', category: 'muscle_gain', calories: 580,
-    benefits: 'Classic muscle building meal with lean protein and complex carbs for energy and recovery.',
-    foods: ['Chicken breast', 'Brown rice', 'Broccoli', 'Egg'],
-    isFavorite: false },
-  { id: 8, name: 'Egg White Omelet', category: 'muscle_gain', calories: 320,
-    benefits: 'Pure protein without excess fats. Perfect for lean muscle building.',
-    foods: ['Egg whites', 'Turkey bacon', 'Cheese', 'Spinach'],
-    isFavorite: false },
-  { id: 9, name: 'Mediterranean Plate', category: 'balanced', calories: 480,
-    benefits: 'Balanced macros with healthy fats, lean protein, and complex carbs. Supports overall health.',
-    foods: ['Grilled chicken', 'Quinoa', 'Hummus', 'Cucumber', 'Olives'],
-    isFavorite: false },
-  { id: 10, name: 'Asian Fusion Bowl', category: 'balanced', calories: 520,
-    benefits: 'Well-rounded with protein, vegetables, and carbs. Good mix of nutrients for daily energy.',
-    foods: ['Tofu', 'Brown rice', 'Edamame', 'Carrots', 'Ginger dressing'],
-    isFavorite: false },
-  { id: 11, name: 'American Classic', category: 'balanced', calories: 550,
-    benefits: 'Complete meal with all food groups. Provides sustained energy and satisfaction.',
-    foods: ['Grilled chicken', 'Whole wheat bread', 'Vegetables', 'Fruit'],
-    isFavorite: false },
-  { id: 12, name: 'Continental Breakfast', category: 'balanced', calories: 420,
-    benefits: 'Morning balance of protein, carbs, and fruits. Great start to the day.',
-    foods: ['Eggs', 'Whole grain toast', 'Yogurt', 'Fresh fruits', 'Juice'],
-    isFavorite: false },
-  { id: 13, name: 'Keto Steak Bowl', category: 'low_carb', calories: 580,
-    benefits: 'Very low carbs, high fat and protein. Puts body in fat-burning state.',
-    foods: ['Ribeye steak', 'Bacon', 'Avocado', 'Eggs', 'Cheese'],
-    isFavorite: false },
-  { id: 14, name: 'Tuna Salad Bowl', category: 'low_carb', calories: 320,
-    benefits: 'Very low carb, high protein. Perfect for low-carb dieters.',
-    foods: ['Canned tuna', 'Mayo', 'Celery', 'Lettuce', 'Avocado'],
-    isFavorite: false },
-  { id: 15, name: 'Chicken Caesar Salad', category: 'low_carb', calories: 450,
-    benefits: 'Low carb with protein. Classic restaurant favorite made healthier.',
-    foods: ['Grilled chicken', 'Romaine lettuce', 'Parmesan', 'Caesar dressing'],
-    isFavorite: false },
-  { id: 16, name: 'Protein Pack', category: 'high_protein', calories: 480,
-    benefits: 'Extremely high protein content. Perfect for post-workout recovery.',
-    foods: ['Chicken breast', 'Greek yogurt', 'Cottage cheese', 'Egg whites'],
-    isFavorite: false },
-  { id: 17, name: 'Seafood Platter', category: 'high_protein', calories: 420,
-    benefits: 'High protein from fish and shellfish. Low in fat, high in omega-3s.',
-    foods: ['Shrimp', 'Salmon', 'Crab', 'Lime', 'Cocktail sauce'],
-    isFavorite: false },
-  { id: 18, name: 'Cottage Cheese Plate', category: 'high_protein', calories: 280,
-    benefits: 'Quick high protein snack or meal. Contains casein protein for sustained release.',
-    foods: ['Cottage cheese', 'Almonds', 'Berries', 'Honey'],
-    isFavorite: false },
-];
-
-// Food Database
-const FOOD_DATABASE: FoodItem[] = [
-  { id: 1, name: 'Apple', category: 'fruits', calories: 95, benefits: 'Good source of fiber, vitamin C, and antioxidants. Helps improve digestion and heart health.', image: null, isFavorite: false },
-  { id: 2, name: 'Banana', category: 'fruits', calories: 105, benefits: 'Rich in potassium, vitamin B6, and fiber. Provides quick energy and supports muscle function.', image: null, isFavorite: false },
-  { id: 3, name: 'Orange', category: 'fruits', calories: 62, benefits: 'Excellent source of vitamin C, fiber, and folate. Boosts immune system.', image: null, isFavorite: false },
-  { id: 4, name: 'Strawberries', category: 'fruits', calories: 49, benefits: 'Low in calories, high in antioxidants, vitamin C, and manganese.', image: null, isFavorite: false },
-  { id: 5, name: 'Blueberries', category: 'fruits', calories: 84, benefits: 'Packed with antioxidants, vitamins C and K. Supports brain health.', image: null, isFavorite: false },
-  { id: 6, name: 'Broccoli', category: 'vegetables', calories: 55, benefits: 'Rich in fiber, vitamin C, and cancer-fighting compounds. Supports bone health.', image: null, isFavorite: false },
-  { id: 7, name: 'Spinach', category: 'vegetables', calories: 23, benefits: 'High in iron, vitamins A, C, and K. Great for eye health and blood pressure.', image: null, isFavorite: false },
-  { id: 8, name: 'Carrots', category: 'vegetables', calories: 25, benefits: 'Excellent source of beta-carotene, fiber, and vitamin A. Promotes eye health.', image: null, isFavorite: false },
-  { id: 9, name: 'Bell Pepper', category: 'vegetables', calories: 31, benefits: 'High in vitamin C, antioxidants, and capsaicin. Boosts metabolism.', image: null, isFavorite: false },
-  { id: 10, name: 'Tomato', category: 'vegetables', calories: 22, benefits: 'Contains lycopene, vitamin C, and potassium. Supports heart health.', image: null, isFavorite: false },
-  { id: 11, name: 'Brown Rice', category: 'grains', calories: 216, benefits: 'Whole grain high in fiber, manganese, and selenium. Supports digestion.', image: null, isFavorite: false },
-  { id: 12, name: 'Oatmeal', category: 'grains', calories: 158, benefits: 'High in fiber, beta-glucan, and antioxidants. Lowers cholesterol levels.', image: null, isFavorite: false },
-  { id: 13, name: 'Quinoa', category: 'grains', calories: 222, benefits: 'Complete protein with all essential amino acids. Gluten-free and high in fiber.', image: null, isFavorite: false },
-  { id: 14, name: 'Whole Wheat Bread', category: 'grains', calories: 81, benefits: 'Good source of fiber, B vitamins, and iron. Sustains energy levels.', image: null, isFavorite: false },
-  { id: 15, name: 'Sweet Potato', category: 'grains', calories: 103, benefits: 'Rich in beta-carotene, fiber, and vitamin C. Stabilizes blood sugar.', image: null, isFavorite: false },
-  { id: 16, name: 'Chicken Breast', category: 'protein', calories: 165, benefits: 'Lean protein source, low in fat. Supports muscle growth and repair.', image: null, isFavorite: false },
-  { id: 17, name: 'Salmon', category: 'protein', calories: 208, benefits: 'Rich in omega-3 fatty acids, protein, and vitamin D. Supports heart and brain health.', image: null, isFavorite: false },
-  { id: 18, name: 'Eggs', category: 'protein', calories: 155, benefits: 'Complete protein with all essential amino acids. Rich in choline and vitamin D.', image: null, isFavorite: false },
-  { id: 19, name: 'Greek Yogurt', category: 'protein', calories: 100, benefits: 'High protein, contains probiotics for gut health. Rich in calcium.', image: null, isFavorite: false },
-  { id: 20, name: 'Lentils', category: 'protein', calories: 230, benefits: 'Plant-based protein high in fiber, iron, and folate. Supports heart health.', image: null, isFavorite: false },
-  { id: 21, name: 'Milk', category: 'dairy', calories: 149, benefits: 'Good source of calcium, protein, and vitamin D. Strengthens bones.', image: null, isFavorite: false },
-  { id: 22, name: 'Cheese', category: 'dairy', calories: 113, benefits: 'High in calcium, protein, and vitamin B12. Supports bone health.', image: null, isFavorite: false },
-  { id: 23, name: 'Cottage Cheese', category: 'dairy', calories: 163, benefits: 'Low-fat, high-protein dairy product. Rich in B vitamins and selenium.', image: null, isFavorite: false },
-  { id: 24, name: 'Almond Milk', category: 'dairy', calories: 39, benefits: 'Dairy-free, low in calories, fortified with calcium and vitamin D.', image: null, isFavorite: false },
-  { id: 25, name: 'Greek Yogurt', category: 'dairy', calories: 100, benefits: 'High protein, probiotics for gut health. Excellent source of calcium.', image: null, isFavorite: false },
-];
-
 const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAdded?: (calories: number) => void }) => {
-  console.log(supabase)
-
   const [activeTab, setActiveTab] = useState<'recipes' | 'meals' | 'foods'>('recipes');
   const [selectedCalories, setSelectedCalories] = useState(0);
   const [showIntakeBar, setShowIntakeBar] = useState(false);
@@ -278,54 +70,248 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
   const [selectedRecipeCategory, setSelectedRecipeCategory] = useState('all');
   const [selectedMealCategory, setSelectedMealCategory] = useState('all');
   const [selectedFoodCategory, setSelectedFoodCategory] = useState('all');
-  const [recipes, setRecipes] = useState<Recipe[]>(RECIPE_DATABASE);
-  const [meals, setMeals] = useState<MealSuggestion[]>(MEAL_DATABASE);
-  const [foods, setFoods] = useState<FoodItem[]>(FOOD_DATABASE);
-  const [expandedRecipe, setExpandedRecipe] = useState<number | null>(null);
-  const [expandedMeal, setExpandedMeal] = useState<number | null>(null);
-  const [expandedFood, setExpandedFood] = useState<number | null>(null);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [meals, setMeals] = useState<MealSuggestion[]>([]);
+  const [foods, setFoods] = useState<FoodItem[]>([]);
+  const [expandedRecipe, setExpandedRecipe] = useState<string | null>(null);
+  const [expandedMeal, setExpandedMeal] = useState<string | null>(null);
+  const [expandedFood, setExpandedFood] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [recipeFavoritesIds, setRecipeFavoritesIds] = useState<Set<string>>(new Set());
+  const [mealFavoritesIds, setMealFavoritesIds] = useState<Set<string>>(new Set());
+  const [foodFavoritesIds, setFoodFavoritesIds] = useState<Set<string>>(new Set());
+
+  // Fetch recipes from Supabase
+  useEffect(() => {
+    async function fetchRecipes() {
+      try {
+        const { data, error } = await supabase
+          .from('recipes')
+          .select('*')
+          .order('name');
+
+        if (error) throw error;
+
+        const mappedRecipes: Recipe[] = data?.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          category: r.category,
+          calories: r.calories,
+          prepTime: r.prep_time,
+          ingredients: r.ingredients || [],
+          instructions: r.instructions || [],
+          benefits: r.benefits || '',
+        })) || [];
+        setRecipes(mappedRecipes);
+      } catch (error) {
+        console.error('Error fetching recipes:', error);
+      }
+    }
+    fetchRecipes();
+  }, []);
+
+  // Fetch foods from Supabase
+  useEffect(() => {
+    async function fetchFoods() {
+      try {
+        const { data, error } = await supabase
+          .from('foods')
+          .select('*')
+          .order('name');
+
+        if (error) throw error;
+
+        const mappedFoods: FoodItem[] = data?.map((f: any) => ({
+          id: f.id,
+          name: f.name,
+          category: f.category,
+          calories: f.calories,
+          benefits: f.benefits || '',
+        })) || [];
+        setFoods(mappedFoods);
+      } catch (error) {
+        console.error('Error fetching foods:', error);
+      }
+    }
+    fetchFoods();
+  }, []);
+
+  // Fetch meals from Supabase
+  useEffect(() => {
+    async function fetchMeals() {
+      try {
+        const { data, error } = await supabase
+          .from('meals')
+          .select('*')
+          .order('name');
+
+        if (error) throw error;
+
+        const mappedMeals: MealSuggestion[] = data?.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          category: m.category,
+          calories: m.calories,
+          benefits: m.benefits || '',
+          foods: m.foods || [],
+        })) || [];
+        setMeals(mappedMeals);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error fetching meals:', error);
+        setLoading(false);
+      }
+    }
+    fetchMeals();
+  }, []);
+
+  // Fetch user favorites
+  useEffect(() => {
+    async function fetchUserFavorites() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user?.id) return;
+
+      try {
+        const { data } = await supabase
+          .from('user_favorites')
+          .select('recipe_id, meal_id, food_id')
+          .eq('user_id', session.user.id);
+
+        if (data) {
+          const recipeIds = new Set((data as any[]).filter(f => f.recipe_id).map((f: any) => f.recipe_id));
+          const mealIds = new Set((data as any[]).filter(f => f.meal_id).map((f: any) => f.meal_id));
+          const foodIds = new Set((data as any[]).filter(f => f.food_id).map((f: any) => f.food_id));
+
+          setRecipeFavoritesIds(recipeIds);
+          setMealFavoritesIds(mealIds);
+          setFoodFavoritesIds(foodIds);
+        }
+      } catch (error) {
+        console.error('Error fetching favorites:', error);
+      }
+    }
+
+    fetchUserFavorites();
+  }, []);
+
+  const isRecipeFavorite = (id: string) => recipeFavoritesIds.has(id);
+  const isMealFavorite = (id: string) => mealFavoritesIds.has(id);
+  const isFoodFavorite = (id: string) => foodFavoritesIds.has(id);
+
+  const toggleRecipeFavorite = async (recipeId: string) => {
+    const isFav = isRecipeFavorite(recipeId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.id) {
+        if (isFav) {
+          await supabase.from('user_favorites').delete().eq('user_id', session.user.id).eq('recipe_id', recipeId);
+        } else {
+          await supabase.from('user_favorites').insert({ user_id: session.user.id, recipe_id: recipeId });
+        }
+      }
+      if (isFav) {
+        setRecipeFavoritesIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(recipeId);
+          return newSet;
+        });
+      } else {
+        setRecipeFavoritesIds(prev => new Set(prev).add(recipeId));
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const toggleMealFavorite = async (mealId: string) => {
+    const isFav = isMealFavorite(mealId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.id) {
+        if (isFav) {
+          await supabase.from('user_favorites').delete().eq('user_id', session.user.id).eq('meal_id', mealId);
+        } else {
+          await supabase.from('user_favorites').insert({ user_id: session.user.id, meal_id: mealId });
+        }
+      }
+      if (isFav) {
+        setMealFavoritesIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(mealId);
+          return newSet;
+        });
+      } else {
+        setMealFavoritesIds(prev => new Set(prev).add(mealId));
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const toggleFoodFavorite = async (foodId: string) => {
+    const isFav = isFoodFavorite(foodId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.id) {
+        if (isFav) {
+          await supabase.from('user_favorites').delete().eq('user_id', session.user.id).eq('food_id', foodId);
+        } else {
+          await supabase.from('user_favorites').insert({ user_id: session.user.id, food_id: foodId });
+        }
+      }
+      if (isFav) {
+        setFoodFavoritesIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(foodId);
+          return newSet;
+        });
+      } else {
+        setFoodFavoritesIds(prev => new Set(prev).add(foodId));
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <View style={[StyleSheet.absoluteFill, styles.loadingContainer]}>
+          <Text style={styles.loadingText}>Loading recipes...</Text>
+        </View>
+      </View>
+    );
+  }
 
   const getFilteredRecipes = () => {
-    if (showFavorites) return recipes.filter(r => r.isFavorite);
+    if (showFavorites) return recipes.filter(r => isRecipeFavorite(r.id));
     if (selectedRecipeCategory === 'all') return recipes;
     return recipes.filter(r => r.category === selectedRecipeCategory);
   };
 
   const getFilteredMeals = () => {
-    if (showFavorites) return meals.filter(m => m.isFavorite);
+    if (showFavorites) return meals.filter(m => isMealFavorite(m.id));
     if (selectedMealCategory === 'all') return meals;
     return meals.filter(m => m.category === selectedMealCategory);
   };
 
   const getFilteredFoods = () => {
-    if (showFavorites) return foods.filter(f => f.isFavorite);
+    if (showFavorites) return foods.filter(f => isFoodFavorite(f.id));
     if (selectedFoodCategory === 'all') return foods;
     return foods.filter(f => f.category === selectedFoodCategory);
   };
 
-  const toggleRecipeFavorite = (id: number) => {
-    setRecipes(prev => prev.map(r => r.id === id ? { ...r, isFavorite: !r.isFavorite } : r));
-  };
-
-  const toggleMealFavorite = (id: number) => {
-    setMeals(prev => prev.map(m => m.id === id ? { ...m, isFavorite: !m.isFavorite } : m));
-  };
-
-  const toggleFoodFavorite = (id: number) => {
-    setFoods(prev => prev.map(f => f.id === id ? { ...f, isFavorite: !f.isFavorite } : f));
-  };
-
   const getTotalFavoritesCalories = () => {
-    const recipeCals = recipes.filter(r => r.isFavorite).reduce((sum, r) => sum + r.calories, 0);
-    const mealCals = meals.filter(m => m.isFavorite).reduce((sum, m) => sum + m.calories, 0);
-    const foodCals = foods.filter(f => f.isFavorite).reduce((sum, f) => sum + f.calories, 0);
+    const recipeCals = recipes.filter(r => isRecipeFavorite(r.id)).reduce((sum, r) => sum + r.calories, 0);
+    const mealCals = meals.filter(m => isMealFavorite(m.id)).reduce((sum, m) => sum + m.calories, 0);
+    const foodCals = foods.filter(f => isFoodFavorite(f.id)).reduce((sum, f) => sum + f.calories, 0);
     return recipeCals + mealCals + foodCals;
   };
 
   const getFavoritesCount = () => {
-    return recipes.filter(r => r.isFavorite).length + 
-           meals.filter(m => m.isFavorite).length + 
-           foods.filter(f => f.isFavorite).length;
+    return recipes.filter(r => isRecipeFavorite(r.id)).length + 
+           meals.filter(m => isMealFavorite(m.id)).length + 
+           foods.filter(f => isFoodFavorite(f.id)).length;
   };
 
   const resetSelection = () => {
@@ -333,7 +319,7 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
     setShowIntakeBar(false);
   };
 
-const addCalories = (calories: number, itemName: string = 'Food item') => {
+  const addCalories = (calories: number, itemName: string = 'Food item') => {
     setSelectedCalories(prev => prev + calories);
     setShowIntakeBar(true);
     Alert.alert('Calorie has been added', `${itemName} (${calories} kcal)`);
@@ -350,7 +336,11 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
   const renderTabButton = (tab: 'recipes' | 'meals' | 'foods', label: string, icon: string) => (
     <Pressable 
       style={[styles.tabButton, activeTab === tab && styles.tabButtonActive]}
-  onPress={() => { setActiveTab(tab); setShowFavorites(false); resetSelection(); }}
+      onPress={() => { 
+        setActiveTab(tab); 
+        setShowFavorites(false); 
+        resetSelection(); 
+      }}
     >
       <Icon style={[styles.tabIcon, activeTab === tab && styles.tabIconActive]} name={icon} />
       <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{label}</Text>
@@ -373,10 +363,10 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
         </View>
       </View>
       <ScrollView style={styles.favList}>
-        {recipes.filter(r => r.isFavorite).length > 0 && (
+        {recipes.filter(r => isRecipeFavorite(r.id)).length > 0 && (
           <View style={styles.favSection}>
             <Text style={styles.favSectionTitle}>Recipes</Text>
-            {recipes.filter(r => r.isFavorite).map(recipe => (
+            {recipes.filter(r => isRecipeFavorite(r.id)).map(recipe => (
               <Pressable key={recipe.id} style={styles.favItem} onPress={() => setExpandedRecipe(expandedRecipe === recipe.id ? null : recipe.id)}>
                 <View style={styles.favItemInfo}>
                   <Text style={styles.favItemName}>{recipe.name}</Text>
@@ -391,7 +381,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
                 {expandedRecipe === recipe.id && (
                   <View style={styles.expanded}>
                     <Text style={styles.expTitle}>Ingredients:</Text>
-                    {recipe.ingredients.map((ing: string, idx: number) => (
+                    {recipe.ingredients.map((ing, idx) => (
                       <Text key={idx} style={styles.bullet}>• {ing}</Text>
                     ))}
                   </View>
@@ -400,10 +390,10 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
             ))}
           </View>
         )}
-        {meals.filter(m => m.isFavorite).length > 0 && (
+        {meals.filter(m => isMealFavorite(m.id)).length > 0 && (
           <View style={styles.favSection}>
             <Text style={styles.favSectionTitle}>Meal Suggestions</Text>
-            {meals.filter(m => m.isFavorite).map(meal => (
+            {meals.filter(m => isMealFavorite(m.id)).map(meal => (
               <Pressable key={meal.id} style={styles.favItem} onPress={() => setExpandedMeal(expandedMeal === meal.id ? null : meal.id)}>
                 <View style={styles.favItemInfo}>
                   <Text style={styles.favItemName}>{meal.name}</Text>
@@ -425,10 +415,10 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
             ))}
           </View>
         )}
-        {foods.filter(f => f.isFavorite).length > 0 && (
+        {foods.filter(f => isFoodFavorite(f.id)).length > 0 && (
           <View style={styles.favSection}>
             <Text style={styles.favSectionTitle}>Foods</Text>
-            {foods.filter(f => f.isFavorite).map(food => (
+            {foods.filter(f => isFoodFavorite(f.id)).map(food => (
               <Pressable key={food.id} style={styles.favItem} onPress={() => setExpandedFood(expandedFood === food.id ? null : food.id)}>
                 <View style={styles.favItemInfo}>
                   <Text style={styles.favItemName}>{food.name}</Text>
@@ -477,7 +467,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
       {!showFavorites && (
         <ScrollView style={styles.list}>
           <Text style={styles.listTitle}>{selectedRecipeCategory === 'all' ? 'All Recipes' : RECIPE_CATEGORIES.find(c => c.id === selectedRecipeCategory)?.name}</Text>
-{getFilteredRecipes().map(recipe => (
+          {getFilteredRecipes().map(recipe => (
             <Pressable key={recipe.id} style={styles.item} onPress={() => setExpandedRecipe(expandedRecipe === recipe.id ? null : recipe.id)}>
               <View style={styles.itemHeader}>
                 <View style={styles.itemInfo}>
@@ -486,7 +476,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
                 </View>
                 <View style={styles.itemActions}>
                   <Pressable onPress={() => toggleRecipeFavorite(recipe.id)}>
-                    <Icon2 style={[styles.favIcon, recipe.isFavorite && styles.favIconActive]} name={recipe.isFavorite ? "heart" : "heart-outline"} />
+                    <Icon2 style={[styles.favIcon, isRecipeFavorite(recipe.id) && styles.favIconActive]} name={isRecipeFavorite(recipe.id) ? "heart" : "heart-outline"} />
                   </Pressable>
                   <Pressable style={styles.addCalButton} onPress={() => addCalories(recipe.calories, recipe.name)}>
                     <Icon name="plus" size={18} color="#4CAF50" />
@@ -499,11 +489,11 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
                   <Text style={styles.expTitle}>Benefits:</Text>
                   <Text style={styles.benefits}>{recipe.benefits}</Text>
                   <Text style={styles.expTitle}>Ingredients:</Text>
-                  {recipe.ingredients.map((ing: string, idx: number) => (
+                  {recipe.ingredients.map((ing, idx) => (
                     <Text key={idx} style={styles.bullet}>• {ing}</Text>
                   ))}
                   <Text style={styles.expTitle}>Instructions:</Text>
-                  {recipe.instructions.map((inst: string, idx: number) => (
+                  {recipe.instructions.map((inst, idx) => (
                     <Text key={idx} style={styles.bullet}>{idx + 1}. {inst}</Text>
                   ))}
                 </View>
@@ -532,7 +522,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
       {!showFavorites && (
         <ScrollView style={styles.list}>
           <Text style={styles.listTitle}>{selectedMealCategory === 'all' ? 'All Meal Suggestions' : MEAL_CATEGORIES.find(c => c.id === selectedMealCategory)?.name}</Text>
-{getFilteredMeals().map(meal => (
+          {getFilteredMeals().map(meal => (
             <Pressable key={meal.id} style={styles.item} onPress={() => setExpandedMeal(expandedMeal === meal.id ? null : meal.id)}>
               <View style={styles.itemHeader}>
                 <View style={styles.itemInfo}>
@@ -541,7 +531,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
                 </View>
                 <View style={styles.itemActions}>
                   <Pressable onPress={() => toggleMealFavorite(meal.id)}>
-                    <Icon2 style={[styles.favIcon, meal.isFavorite && styles.favIconActive]} name={meal.isFavorite ? "heart" : "heart-outline"} />
+                    <Icon2 style={[styles.favIcon, isMealFavorite(meal.id) && styles.favIconActive]} name={isMealFavorite(meal.id) ? "heart" : "heart-outline"} />
                   </Pressable>
                   <Pressable style={styles.addCalButton} onPress={() => addCalories(meal.calories, meal.name)}>
                     <Icon name="plus" size={18} color="#4CAF50" />
@@ -554,7 +544,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
                   <Text style={styles.expTitle}>Benefits:</Text>
                   <Text style={styles.benefits}>{meal.benefits}</Text>
                   <Text style={styles.expTitle}>Contains:</Text>
-                  {meal.foods.map((food: string, idx: number) => (
+                  {meal.foods.map((food, idx) => (
                     <Text key={idx} style={styles.bullet}>• {food}</Text>
                   ))}
                 </View>
@@ -583,7 +573,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
       {!showFavorites && (
         <ScrollView style={styles.list}>
           <Text style={styles.listTitle}>{selectedFoodCategory === 'all' ? 'All Foods' : FOOD_CATEGORIES.find(c => c.id === selectedFoodCategory)?.name}</Text>
-{getFilteredFoods().map(food => (
+          {getFilteredFoods().map(food => (
             <Pressable key={food.id} style={styles.item} onPress={() => setExpandedFood(expandedFood === food.id ? null : food.id)}>
               <View style={styles.itemHeader}>
                 <View style={styles.itemInfo}>
@@ -592,7 +582,7 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
                 </View>
                 <View style={styles.itemActions}>
                   <Pressable onPress={() => toggleFoodFavorite(food.id)}>
-                    <Icon2 style={[styles.favIcon, food.isFavorite && styles.favIconActive]} name={food.isFavorite ? "heart" : "heart-outline"} />
+                    <Icon2 style={[styles.favIcon, isFoodFavorite(food.id) && styles.favIconActive]} name={isFoodFavorite(food.id) ? "heart" : "heart-outline"} />
                   </Pressable>
                   <Pressable style={styles.addCalButton} onPress={() => addCalories(food.calories, food.name)}>
                     <Icon name="plus" size={18} color="#4CAF50" />
@@ -638,13 +628,16 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
         </View>
       )}
       <View style={styles.favToggle}>
-          <Pressable style={[styles.favButton, showFavorites && styles.favButtonActive]} onPress={() => {setShowFavorites(!showFavorites); if (!showFavorites) resetSelection(); }}>
-            <Icon2 style={[styles.favBtnIcon, showFavorites && styles.favBtnIconActive]} name="heart" />
-            <Text style={[styles.favBtnText, showFavorites && styles.favBtnTextActive]}>
-              My Favorites {getFavoritesCount() > 0 ? `(${getFavoritesCount()})` : ''}
-            </Text>
-          </Pressable>
-        </View>
+        <Pressable style={[styles.favButton, showFavorites && styles.favButtonActive]} onPress={() => {
+          setShowFavorites(!showFavorites);
+          if (!showFavorites) resetSelection();
+        }}>
+          <Icon2 style={[styles.favBtnIcon, showFavorites && styles.favBtnIconActive]} name="heart" />
+          <Text style={[styles.favBtnText, showFavorites && styles.favBtnTextActive]}>
+            My Favorites {getFavoritesCount() > 0 ? `(${getFavoritesCount()})` : ''}
+          </Text>
+        </Pressable>
+      </View>
       {showFavorites ? renderFavorites() : (
         <>
           {activeTab === 'recipes' && renderRecipesTab()}
@@ -654,10 +647,21 @@ const addCalories = (calories: number, itemName: string = 'Food item') => {
       )}
     </View>
   );
-}
+};
 
 export default RecipesScreen;
+
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+  },
+  // ... rest of existing styles unchanged
   addCalButton: {
     padding: 5,
   },
@@ -696,27 +700,68 @@ const styles = StyleSheet.create({
   clearButton: {
     padding: 8,
   },
-  container: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "#15041f", zIndex: 400 },
+  container: { 
+    position: "absolute", 
+    top: 0, left: 0, right: 0, bottom: 0, 
+    backgroundColor: "#15041f", 
+    zIndex: 400 
+  },
   header1: { height: 35, backgroundColor: "#15041f" },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingVertical: 15, backgroundColor: "#1e1929", borderBottomWidth: 1, borderBottomColor: "#362c3a" },
+  header: { 
+    flexDirection: "row", 
+    justifyContent: "space-between", 
+    alignItems: "center", 
+    paddingHorizontal: 20, 
+    paddingVertical: 15, 
+    backgroundColor: "#1e1929", 
+    borderBottomWidth: 1, 
+    borderBottomColor: "#362c3a" 
+  },
   title: { fontSize: 20, fontWeight: "bold", color: "#FFFFFF" },
   closeIcon: { fontSize: 30, color: "#FFFFFF" },
   tabNav: { flexDirection: "row", backgroundColor: "#1e1929", paddingHorizontal: 10, paddingVertical: 10, gap: 5 },
-  tabButton: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#362c3a", paddingVertical: 10, paddingHorizontal: 10, borderRadius: 10, gap: 5 },
+  tabButton: { 
+    flex: 1, 
+    flexDirection: "row", 
+    alignItems: "center", 
+    justifyContent: "center", 
+    backgroundColor: "#362c3a", 
+    paddingVertical: 10, 
+    paddingHorizontal: 10, 
+    borderRadius: 10, 
+    gap: 5 
+  },
   tabButtonActive: { backgroundColor: "#c67ee2" },
   tabIcon: { fontSize: 16, color: "#CCCCCC" },
   tabIconActive: { color: "#FFFFFF" },
   tabText: { fontSize: 14, color: "#CCCCCC", fontWeight: "500" },
   tabTextActive: { color: "#FFFFFF", fontWeight: "bold" },
   favToggle: { padding: 15, backgroundColor: "#1e1929" },
-  favButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#362c3a", padding: 12, borderRadius: 10, gap: 10 },
+  favButton: { 
+    flexDirection: "row", 
+    alignItems: "center", 
+    justifyContent: "center", 
+    backgroundColor: "#362c3a", 
+    padding: 12, 
+    borderRadius: 10, 
+    gap: 10 
+  },
   favButtonActive: { backgroundColor: "#c67ee2" },
   favBtnIcon: { fontSize: 20, color: "#CCCCCC" },
   favBtnIconActive: { color: "#FFFFFF" },
   favBtnText: { fontSize: 16, fontWeight: "bold", color: "#CCCCCC" },
   favBtnTextActive: { color: "#FFFFFF" },
   categories: { paddingHorizontal: 15, paddingVertical: 15 },
-  catButton: { flexDirection: "row", alignItems: "center", backgroundColor: "#362c3a", paddingVertical: 10, paddingHorizontal: 15, borderRadius: 20, marginRight: 10, gap: 8 },
+  catButton: { 
+    flexDirection: "row", 
+    alignItems: "center", 
+    backgroundColor: "#362c3a", 
+    paddingVertical: 10, 
+    paddingHorizontal: 15, 
+    borderRadius: 20, 
+    marginRight: 10, 
+    gap: 8 
+  },
   catButtonActive: { backgroundColor: "#c67ee2" },
   catIcon: { fontSize: 16, color: "#CCCCCC" },
   catIconActive: { color: "#FFFFFF" },

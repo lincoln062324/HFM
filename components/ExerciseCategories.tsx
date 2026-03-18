@@ -5,10 +5,9 @@ interface Category {
 }
 
 export const EXERCISE_CATEGORIES: Category[] = [
-  { id: 'all', name: 'All', icon: 'th' },
-  { id: 'cardio', name: 'Cardio', icon: 'heart-pulse' },
+  { id: 'cardio', name: 'Cardio', icon: 'heart' },
   { id: 'strength', name: 'Strength', icon: 'dumbbell' },
-  { id: 'flexibility', name: 'Flexibility', icon: 'person-running' },
+  { id: 'flexibility', name: 'Flexibility', icon: 'running' },
   { id: 'balance', name: 'Balance', icon: 'balance-scale' },
 ];
 
