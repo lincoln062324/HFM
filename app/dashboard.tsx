@@ -818,53 +818,49 @@ const deleteNoteFromSupabase = useCallback(async (noteId: string): Promise<void>
     setActiveTab('write');
   };
 
+const refreshSavedNotes = async () => {
+  const notes = await loadNotes();
+  setStickyNotes(notes);
+  console.log('🔄 Saved notes refreshed:', notes.length);
+};
+
 const handleSaveNote = async () => {
   console.log('✏️ handleSaveNote called');
-  if (!newNoteTitle.trim() && !newNoteContent.trim() && currentNote?.items.length === 0) {
+  if (!newNoteTitle.trim() && !newNoteContent.trim() && (!currentNote || currentNote.items.length === 0)) {
     Alert.alert("Error", "Please add some content to your note.");
     return;
   }
 
   const now = new Date().toISOString();
+  let updatedNote: StickyNote;
   
   if (currentNote) {
     console.log('🔄 Updating note:', currentNote.id);
-    // Update existing note
-    const updatedNote: StickyNote = {
+    updatedNote = {
       ...currentNote,
       title: newNoteTitle || currentNote.title,
       content: newNoteContent || currentNote.content,
       updatedAt: now,
     };
-    
-    await saveNoteToSupabase(updatedNote);
-    
-    // Refresh notes list
-    const refreshedNotes = await loadNotes();
-    setStickyNotes(refreshedNotes);
-    
-    Alert.alert("Success", "Note updated successfully!");
   } else {
     console.log('➕ Creating new note');
-    // Create new note
-    const newNote: StickyNote = {
+    updatedNote = {
       id: Date.now().toString(),
       title: newNoteTitle || "Untitled Note",
-      content: newNoteContent,
+      content: newNoteContent || '',
       items: [],
       createdAt: now,
       updatedAt: now,
     };
-    
-    await saveNoteToSupabase(newNote);
-    
-    // Refresh notes list
-    const refreshedNotes = await loadNotes();
-    setStickyNotes(refreshedNotes);
-    
-    Alert.alert("Success", "Note saved successfully!");
   }
   
+  // Save to Supabase + local, then refresh
+  await saveNoteToSupabase(updatedNote);
+  await refreshSavedNotes();
+  
+  Alert.alert("Success", "Note saved successfully!");
+  
+  // Reset form
   setIsCreatingNew(false);
   setCurrentNote(null);
   setNewNoteTitle("");
@@ -872,53 +868,61 @@ const handleSaveNote = async () => {
   setNewListItem("");
 };
 
-  const handleAddListItem = () => {
-    if (!newListItem.trim()) return;
-    
-    const newItem: StickyNoteItem = {
-      id: Date.now().toString(),
-      text: newListItem,
-      checked: false,
+
+const handleAddListItem = async () => {
+  if (!newListItem.trim()) return;
+  
+  const newItem: StickyNoteItem = {
+    id: Date.now().toString(),
+    text: newListItem,
+    checked: false,
+  };
+
+  let updatedNote: StickyNote;
+  if (currentNote) {
+    updatedNote = {
+      ...currentNote,
+      items: [...currentNote.items, newItem],
+      updatedAt: new Date().toISOString(),
     };
+  } else {
+    updatedNote = {
+      id: Date.now().toString(),
+      title: newNoteTitle || "Untitled List",
+      content: "",
+      items: [newItem],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  
+  setCurrentNote(updatedNote);
+  setNewListItem("");
+  
+  // Auto-save list changes
+  await saveNoteToSupabase(updatedNote);
+  await refreshSavedNotes();
+};
 
-    if (currentNote) {
-      setCurrentNote({
-        ...currentNote,
-        items: [...currentNote.items, newItem],
-      });
-    } else {
-      setCurrentNote({
-        id: Date.now().toString(),
-        title: newNoteTitle || "Untitled List",
-        content: "",
-        items: [newItem],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-    }
-    setNewListItem("");
-  };
 
-  const handleToggleItem = async (itemId: string) => {
-    if (currentNote) {
-      const updatedItems = currentNote.items.map(item =>
-        item.id === itemId ? { ...item, checked: !item.checked } : item
-      );
-      
-      const updatedNote: StickyNote = {
-        ...currentNote,
-        items: updatedItems,
-        updatedAt: new Date().toISOString()
-      };
-      
-      setCurrentNote(updatedNote);
-      await saveNoteToSupabase(updatedNote);
-      
-      // Refresh notes list
-      const refreshedNotes = await loadNotes();
-      setStickyNotes(refreshedNotes);
-    }
-  };
+const handleToggleItem = async (itemId: string) => {
+  if (currentNote) {
+    const updatedItems = currentNote.items.map(item =>
+      item.id === itemId ? { ...item, checked: !item.checked } : item
+    );
+    
+    const updatedNote: StickyNote = {
+      ...currentNote,
+      items: updatedItems,
+      updatedAt: new Date().toISOString()
+    };
+    
+    setCurrentNote(updatedNote);
+    await saveNoteToSupabase(updatedNote);
+    await refreshSavedNotes();
+  }
+};
+
 
   const handleDeleteNote = async (noteId: string) => {
     Alert.alert(
@@ -1686,12 +1690,12 @@ data={dynamicCalorieData}
               </View>
             </View>
 
-{/* Saved Notes Section with Debug */}
+              {/* Saved Notes Section with Debug */}
               <View style={styles.savedNotesSection}>
                 <View style={styles.savedNotesHeader}>
                   {/* Debug render log - moved to useEffect */}
                 <Text style={styles.savedNotesTitle}>Saved Notes</Text>
-<Pressable onPress={async () => {
+                  <Pressable onPress={async () => {
                   console.log('🖱️ REFRESH TAP ✅');
                   console.log('🔄 Manual refresh - userSession:', userSession?.user?.id);
                   try {
@@ -1702,7 +1706,7 @@ data={dynamicCalorieData}
                     console.error('💥 Load notes error:', e);
                   }
                 }} style={[styles.refreshButton, {backgroundColor: 'rgba(198,126,226,0.3)', borderRadius: 20, padding: 6}]}>
-                  <Icon name="refresh" size={18} color="#c67ee2" />
+                  <Icon name="refresh" size={18} color="#ffffff" />
                 </Pressable>
               </View>
               
@@ -3364,7 +3368,7 @@ const styles = StyleSheet.create({
   savedNotesTitle: {
     fontSize: 20,
     fontWeight: 800,
-    color: "#c67ee2",
+    color: "#ffffff",
     marginBottom: 10,
   },
   savedNoteCard: {

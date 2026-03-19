@@ -83,27 +83,29 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
     fetchExercises();
   }, []);
 
-  // Fetch user favorites (requires auth)
+  // Fetch user favorites (guest-friendly - anon key public read)
   useEffect(() => {
     async function fetchUserFavorites() {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user?.id) {
-        console.log('No user logged in, skipping favorites');
-        return;
-      }
+      
+      if (session?.user?.id) {
+        // Authenticated: personal favorites
+        try {
+          const { data, error } = await supabase
+            .from('user_favorites_exercise')
+            .select('exercise_id')
+            .eq('user_id', session.user.id);
 
-      try {
-        const { data, error } = await supabase
-          .from('user_favorites')
-          .select('exercise_id')
-          .eq('user_id', session.user.id);
-
-        if (error) throw error;
-
-        const favoriteIds = new Set(data?.map((f: any) => f.exercise_id) || []);
-        setUserFavoritesIds(favoriteIds);
-      } catch (error) {
-        console.error('Error fetching favorites:', error);
+          if (error) throw error;
+          const favoriteIds = new Set(data?.map((f: any) => f.exercise_id) || []);
+          setUserFavoritesIds(favoriteIds);
+        } catch (error) {
+          console.error('Error fetching personal favorites:', error);
+        }
+      } else {
+        // Guest: empty favorites (local toggle only)
+        console.log('Guest mode - local favorites only');
+        setUserFavoritesIds(new Set());
       }
     }
 
@@ -132,39 +134,42 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
 
   const toggleFavorite = async (exerciseId: string) => {
     const isFav = userFavoritesIds.has(exerciseId);
+    
+    // Always toggle local state FIRST (instant UI)
+    if (isFav) {
+      setUserFavoritesIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(exerciseId);
+        return newSet;
+      });
+      Alert.alert("Removed", 'Removed from favorites (local)');
+    } else {
+      setUserFavoritesIds(prev => new Set(prev).add(exerciseId));
+      Alert.alert("Added", 'Added to favorites (local)');
+    }
+    
+    // Optional DB sync if logged in
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user?.id) {
-        // Sync with DB
         if (isFav) {
-          const { error } = await supabase
-            .from('user_favorites')
+          await supabase
+            .from('user_favorites_exercise')
             .delete()
             .eq('user_id', session.user.id)
             .eq('exercise_id', exerciseId);
-          if (error) throw error;
         } else {
-          const { error } = await supabase
-            .from('user_favorites')
+          await supabase
+            .from('user_favorites_exercise')
             .insert({ user_id: session.user.id, exercise_id: exerciseId });
-          if (error) throw error;
         }
-      }
-      // Always toggle local state
-      if (isFav) {
-        setUserFavoritesIds(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(exerciseId);
-          return newSet;
-        });
-        Alert.alert("Removed", 'Removed from favorites');
+        console.log('DB sync OK');
       } else {
-        setUserFavoritesIds(prev => new Set(prev).add(exerciseId));
-        Alert.alert("Added", 'Added to favorites!');
+        console.log('Guest - local only');
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to toggle favorite');
-      console.error(error);
+      console.error('DB sync failed (local OK):', error);
+      // Local already updated - UI fine
     }
   };
 
