@@ -1,5 +1,6 @@
 // Exercise Screen Component with Categories, Details, and Persistent Favorites (RecipesScreen-style)
 import { StyleSheet, Text, View, ScrollView, Pressable, Dimensions, Alert } from "react-native";
+import { toggleFavoriteLocal, loadFavorites } from './PersistentFavoritesStorage';
 import React, { useState, useEffect } from "react";
 import Icon from "react-native-vector-icons/FontAwesome5";
 import Icon2 from "react-native-vector-icons/FontAwesome";
@@ -83,33 +84,12 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
     fetchExercises();
   }, []);
 
-  // Fetch user favorites (guest-friendly - anon key public read)
+// Load persistent local favorites on mount
   useEffect(() => {
-    async function fetchUserFavorites() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user?.id) {
-        // Authenticated: personal favorites
-        try {
-          const { data, error } = await supabase
-            .from('user_favorites_exercise')
-            .select('exercise_id')
-            .eq('user_id', session.user.id);
-
-          if (error) throw error;
-          const favoriteIds = new Set(data?.map((f: any) => f.exercise_id) || []);
-          setUserFavoritesIds(favoriteIds);
-        } catch (error) {
-          console.error('Error fetching personal favorites:', error);
-        }
-      } else {
-        // Guest: empty favorites (local toggle only)
-        console.log('Guest mode - local favorites only');
-        setUserFavoritesIds(new Set());
-      }
-    }
-
-    fetchUserFavorites();
+    loadFavorites().then(favs => {
+      console.log('Loaded local favorites:', favs);
+      setUserFavoritesIds(new Set(favs));
+    });
   }, []);
 
   const addCalories = (calories: number) => {
@@ -135,41 +115,31 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
   const toggleFavorite = async (exerciseId: string) => {
     const isFav = userFavoritesIds.has(exerciseId);
     
-    // Always toggle local state FIRST (instant UI)
+    // Persistent local toggle + instant UI
+    const newFavorites = await toggleFavoriteLocal(exerciseId, userFavoritesIds);
+    setUserFavoritesIds(newFavorites);
+    
     if (isFav) {
-      setUserFavoritesIds(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(exerciseId);
-        return newSet;
-      });
-      Alert.alert("Removed", 'Removed from favorites (local)');
+      Alert.alert("Removed", `Removed from favorites (${newFavorites.size})`);
     } else {
-      setUserFavoritesIds(prev => new Set(prev).add(exerciseId));
-      Alert.alert("Added", 'Added to favorites (local)');
+      Alert.alert("Added", `Added to favorites (${newFavorites.size})`);
     }
     
-    // Optional DB sync if logged in
+    // Optional DB sync
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user?.id) {
         if (isFav) {
-          await supabase
-            .from('user_favorites_exercise')
-            .delete()
-            .eq('user_id', session.user.id)
-            .eq('exercise_id', exerciseId);
+          await supabase.from('user_favorites_exercise')
+            .delete().eq('user_id', session.user.id).eq('exercise_id', exerciseId);
         } else {
-          await supabase
-            .from('user_favorites_exercise')
+          await supabase.from('user_favorites_exercise')
             .insert({ user_id: session.user.id, exercise_id: exerciseId });
         }
-        console.log('DB sync OK');
-      } else {
-        console.log('Guest - local only');
+        console.log('DB synced');
       }
-    } catch (error) {
-      console.error('DB sync failed (local OK):', error);
-      // Local already updated - UI fine
+    } catch (e) {
+      console.log('DB sync failed - local OK');
     }
   };
 
