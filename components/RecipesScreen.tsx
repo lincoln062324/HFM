@@ -165,27 +165,35 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
     fetchMeals();
   }, []);
 
-  // Fetch user favorites
+  // Fetch user favorites from three dedicated tables (guests + logged-in users)
   useEffect(() => {
     async function fetchUserFavorites() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user?.id) return;
-
       try {
-        const { data } = await supabase
-          .from('user_favorites')
-          .select('recipe_id, meal_id, food_id')
-          .eq('user_id', session.user.id);
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id ?? null;
 
-        if (data) {
-          const recipeIds = new Set((data as any[]).filter(f => f.recipe_id).map((f: any) => f.recipe_id));
-          const mealIds = new Set((data as any[]).filter(f => f.meal_id).map((f: any) => f.meal_id));
-          const foodIds = new Set((data as any[]).filter(f => f.food_id).map((f: any) => f.food_id));
+        const buildQuery = (table: string, idCol: string) => {
+          let q = supabase.from(table).select(idCol);
+          return userId ? q.eq('user_id', userId) : q.is('user_id', null);
+        };
 
-          setRecipeFavoritesIds(recipeIds);
-          setMealFavoritesIds(mealIds);
-          setFoodFavoritesIds(foodIds);
+        const [recipesRes, mealsRes, foodsRes] = await Promise.all([
+          buildQuery('user_favorites_recipes', 'recipe_id'),
+          buildQuery('user_favorites_meals',   'meal_id'),
+          buildQuery('user_favorites_foods',   'food_id'),
+        ]);
+
+        if (recipesRes.data) {
+          setRecipeFavoritesIds(new Set(recipesRes.data.map((r: any) => r.recipe_id)));
         }
+        if (mealsRes.data) {
+          setMealFavoritesIds(new Set(mealsRes.data.map((m: any) => m.meal_id)));
+        }
+        if (foodsRes.data) {
+          setFoodFavoritesIds(new Set(foodsRes.data.map((f: any) => f.food_id)));
+        }
+
+        console.log('Favorites loaded | user:', userId ?? 'guest');
       } catch (error) {
         console.error('Error fetching favorites:', error);
       }
@@ -200,76 +208,106 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
 
   const toggleRecipeFavorite = async (recipeId: string) => {
     const isFav = isRecipeFavorite(recipeId);
+    const recipe = recipes.find(r => r.id === recipeId);
+
+    // Instant UI update
+    if (isFav) {
+      setRecipeFavoritesIds(prev => { const s = new Set(prev); s.delete(recipeId); return s; });
+    } else {
+      setRecipeFavoritesIds(prev => new Set(prev).add(recipeId));
+    }
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.id) {
-        if (isFav) {
-          await supabase.from('user_favorites').delete().eq('user_id', session.user.id).eq('recipe_id', recipeId);
-        } else {
-          await supabase.from('user_favorites').insert({ user_id: session.user.id, recipe_id: recipeId });
-        }
-      }
+      const userId = session?.user?.id ?? null;
+
       if (isFav) {
-        setRecipeFavoritesIds(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(recipeId);
-          return newSet;
-        });
+        let q = supabase.from('user_favorites_recipes').delete().eq('recipe_id', recipeId);
+        const { error } = await (userId ? q.eq('user_id', userId) : q.is('user_id', null));
+        if (error) throw error;
+        console.log('Supabase: removed recipe favorite', recipe?.name);
       } else {
-        setRecipeFavoritesIds(prev => new Set(prev).add(recipeId));
+        const { error } = await supabase.from('user_favorites_recipes').insert({
+          user_id:         userId,
+          recipe_id:       recipeId,
+          recipe_name:     recipe?.name,
+          recipe_category: recipe?.category,
+        });
+        if (error) throw error;
+        console.log('Supabase: saved recipe', recipe?.name, recipe?.category, '| user:', userId ?? 'guest');
       }
     } catch (error) {
-      console.error(error);
+      console.error('Recipe favorite sync failed:', error);
     }
   };
 
   const toggleMealFavorite = async (mealId: string) => {
     const isFav = isMealFavorite(mealId);
+    const meal = meals.find(m => m.id === mealId);
+
+    // Instant UI update
+    if (isFav) {
+      setMealFavoritesIds(prev => { const s = new Set(prev); s.delete(mealId); return s; });
+    } else {
+      setMealFavoritesIds(prev => new Set(prev).add(mealId));
+    }
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.id) {
-        if (isFav) {
-          await supabase.from('user_favorites').delete().eq('user_id', session.user.id).eq('meal_id', mealId);
-        } else {
-          await supabase.from('user_favorites').insert({ user_id: session.user.id, meal_id: mealId });
-        }
-      }
+      const userId = session?.user?.id ?? null;
+
       if (isFav) {
-        setMealFavoritesIds(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(mealId);
-          return newSet;
-        });
+        let q = supabase.from('user_favorites_meals').delete().eq('meal_id', mealId);
+        const { error } = await (userId ? q.eq('user_id', userId) : q.is('user_id', null));
+        if (error) throw error;
+        console.log('Supabase: removed meal favorite', meal?.name);
       } else {
-        setMealFavoritesIds(prev => new Set(prev).add(mealId));
+        const { error } = await supabase.from('user_favorites_meals').insert({
+          user_id:       userId,
+          meal_id:       mealId,
+          meal_name:     meal?.name,
+          meal_category: meal?.category,
+        });
+        if (error) throw error;
+        console.log('Supabase: saved meal', meal?.name, meal?.category, '| user:', userId ?? 'guest');
       }
     } catch (error) {
-      console.error(error);
+      console.error('Meal favorite sync failed:', error);
     }
   };
 
   const toggleFoodFavorite = async (foodId: string) => {
     const isFav = isFoodFavorite(foodId);
+    const food = foods.find(f => f.id === foodId);
+
+    // Instant UI update
+    if (isFav) {
+      setFoodFavoritesIds(prev => { const s = new Set(prev); s.delete(foodId); return s; });
+    } else {
+      setFoodFavoritesIds(prev => new Set(prev).add(foodId));
+    }
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.id) {
-        if (isFav) {
-          await supabase.from('user_favorites').delete().eq('user_id', session.user.id).eq('food_id', foodId);
-        } else {
-          await supabase.from('user_favorites').insert({ user_id: session.user.id, food_id: foodId });
-        }
-      }
+      const userId = session?.user?.id ?? null;
+
       if (isFav) {
-        setFoodFavoritesIds(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(foodId);
-          return newSet;
-        });
+        let q = supabase.from('user_favorites_foods').delete().eq('food_id', foodId);
+        const { error } = await (userId ? q.eq('user_id', userId) : q.is('user_id', null));
+        if (error) throw error;
+        console.log('Supabase: removed food favorite', food?.name);
       } else {
-        setFoodFavoritesIds(prev => new Set(prev).add(foodId));
+        const { error } = await supabase.from('user_favorites_foods').insert({
+          user_id:       userId,
+          food_id:       foodId,
+          food_name:     food?.name,
+          food_category: food?.category,
+        });
+        if (error) throw error;
+        console.log('Supabase: saved food', food?.name, food?.category, '| user:', userId ?? 'guest');
       }
     } catch (error) {
-      console.error(error);
+      console.error('Food favorite sync failed:', error);
     }
   };
 
@@ -803,4 +841,3 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 18, fontWeight: "bold", color: "#CCCCCC", marginBottom: 5 },
   emptySubText: { fontSize: 14, color: "#888888", textAlign: "center" },
 });
-
