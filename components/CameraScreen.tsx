@@ -1,17 +1,32 @@
-import React, { useState, useRef, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { StyleSheet, Text, View, Pressable, Alert, Image, ActivityIndicator, ScrollView, FlatList, Modal } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  StyleSheet, Text, View, Pressable, Alert, Image,
+  ActivityIndicator, ScrollView, FlatList, Modal, Animated,
+} from 'react-native';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
-import Icon from 'react-native-vector-icons/FontAwesome';
+import * as FileSystem from 'expo-file-system';
 
-// Food Entry interface for storage
+// Convert a local file URI to base64 without relying on EncodingType
+const uriToBase64 = async (uri: string): Promise<string> => {
+  // expo-file-system readAsStringAsync with string literal avoids the missing enum
+  const result = await (FileSystem as any).readAsStringAsync(uri, { encoding: 'base64' });
+  return result as string;
+};
+import Icon from 'react-native-vector-icons/FontAwesome';
+import Icon5 from 'react-native-vector-icons/FontAwesome5';
+import supabase from '../lib/supabase';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 export interface FoodEntry {
   id: string;
-  imageUri: string;
+  imageUri: string;       // local URI (for display)
+  imageUrl?: string;      // Supabase Storage public URL
   foodName: string;
   calories: number;
   benefits: string;
+  nutrients?: string;
   timestamp: string;
+  userId?: string;
 }
 
 interface CameraScreenProps {
@@ -19,158 +34,292 @@ interface CameraScreenProps {
   onFoodAnalyzed?: (food: FoodEntry) => void;
 }
 
-// Mock AI Food Analysis API - Simulates food scanning
-const analyzeFoodWithAI = async (imageUri: string): Promise<{ foodName: string; calories: number; benefits: string }> => {
-  // Simulate API call delay
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  
-  // Mock response - in production, this would call a real AI API
-  const foodOptions = [
-    { foodName: 'Grilled Chicken Salad', calories: 350, benefits: 'High protein, low carbs, rich in vitamins A and C, supports muscle growth and immune system.' },
-    { foodName: 'Pasta Carbonara', calories: 550, benefits: 'Good source of carbohydrates for energy, protein from eggs and cheese, satisfying and filling.' },
-    { foodName: 'Vegetable Stir Fry', calories: 220, benefits: 'Low calorie, high fiber, packed with antioxidants, promotes digestive health and reduces disease risk.' },
-    { foodName: 'Grilled Salmon', calories: 400, benefits: 'Excellent source of omega-3 fatty acids, high quality protein, supports heart and brain health.' },
-    { foodName: 'Fruit Smoothie Bowl', calories: 280, benefits: 'Rich in vitamins and antioxidants, natural sugars for energy, supports immune system and skin health.' },
-    { foodName: 'Quinoa Buddha Bowl', calories: 420, benefits: 'Complete protein source, high in fiber, contains iron and magnesium for energy metabolism.' },
-    { foodName: 'Avocado Toast', calories: 320, benefits: 'Healthy fats for heart health, fiber-rich, provides sustained energy and supports brain function.' },
-    { foodName: 'Greek Yogurt Parfait', calories: 250, benefits: 'Probiotics for gut health, high protein for satiety, calcium for bone health.' },
-  ];
-  
-  // Randomly select a food for demo purposes
-  const randomIndex = Math.floor(Math.random() * foodOptions.length);
-  return foodOptions[randomIndex];
+// ─── Claude Vision AI Analysis ───────────────────────────────────────────────
+const analyzeFoodWithClaude = async (
+  imageUri: string
+): Promise<{ foodName: string; calories: number; benefits: string; nutrients: string }> => {
+  // Read the image as base64
+  const base64 = await uriToBase64(imageUri);
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/jpeg', data: base64 },
+            },
+            {
+              type: 'text',
+              text: `You are a professional nutritionist and food analyst. Analyze this food image and respond ONLY with a valid JSON object — no markdown, no backticks, no explanation. Use this exact shape:
+{
+  "foodName": "specific food name",
+  "calories": number (integer, realistic per serving),
+  "benefits": "2-3 sentences on health benefits",
+  "nutrients": "key nutrients: protein Xg, carbs Xg, fat Xg, fiber Xg"
+}
+If no food is visible, use foodName "Unknown Food", calories 0, and brief notes.`,
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Claude API error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+  const raw = data.content?.[0]?.text ?? '{}';
+
+  // Strip any accidental markdown fences
+  const clean = raw.replace(/```json|```/g, '').trim();
+  const parsed = JSON.parse(clean);
+
+  return {
+    foodName: parsed.foodName ?? 'Unknown Food',
+    calories: typeof parsed.calories === 'number' ? parsed.calories : 0,
+    benefits: parsed.benefits ?? '',
+    nutrients: parsed.nutrients ?? '',
+  };
 };
 
+// ─── Supabase helpers ─────────────────────────────────────────────────────────
+const mapRow = (row: any): FoodEntry => ({
+  id: row.id,
+  imageUri: row.image_url ?? '',
+  imageUrl: row.image_url ?? '',
+  foodName: row.food_name,
+  calories: row.calories,
+  benefits: row.benefits ?? '',
+  nutrients: row.nutrients ?? '',
+  timestamp: row.analyzed_at,
+  userId: row.user_id,
+});
+
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function CameraScreen({ onClose, onFoodAnalyzed }: CameraScreenProps) {
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>('back');
   const [isTakingPicture, setIsTakingPicture] = useState(false);
   const [lastPhoto, setLastPhoto] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<{ foodName: string; calories: number; benefits: string } | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<{
+    foodName: string; calories: number; benefits: string; nutrients: string;
+  } | null>(null);
   const [savedPhotos, setSavedPhotos] = useState<FoodEntry[]>([]);
+  const [dbLoading, setDbLoading] = useState(false);
   const [showStorageModal, setShowStorageModal] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<FoodEntry | null>(null);
   const [showPhotoDetailsModal, setShowPhotoDetailsModal] = useState(false);
+  const [analyzingDots, setAnalyzingDots] = useState('');
 
-  const PHOTO_STORAGE_KEY = 'camera_saved_photos';
-
-  // Load saved photos from storage
-  const loadSavedPhotos = async () => {
-    try {
-      const stored = await AsyncStorage.getItem(PHOTO_STORAGE_KEY);
-      if (stored) {
-        setSavedPhotos(JSON.parse(stored));
-      }
-    } catch (error) {
-      console.error('Failed to load saved photos:', error);
-    }
-  };
-
-  // Save photo to storage and update state
-  const savePhoto = async (foodEntry: FoodEntry) => {
-    try {
-      const updated = [foodEntry, ...savedPhotos];
-      await AsyncStorage.setItem(PHOTO_STORAGE_KEY, JSON.stringify(updated));
-      setSavedPhotos(updated);
-    } catch (error) {
-      console.error('Failed to save photo:', error);
-      Alert.alert('Error', 'Failed to save photo to storage.');
-    }
-  };
-
-  useEffect(() => {
-    loadSavedPhotos();
-  }, []);
   const cameraRef = useRef<CameraView>(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  const toggleFacing = () => {
-    setFacing(current => (current === 'back' ? 'front' : 'back'));
+  // Animated pulse for analyze button
+  useEffect(() => {
+    if (isAnalyzing) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.08, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+        ])
+      ).start();
+      const interval = setInterval(() => {
+        setAnalyzingDots(d => d.length >= 3 ? '' : d + '.');
+      }, 400);
+      return () => clearInterval(interval);
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [isAnalyzing]);
+
+  // ── Fetch saved analyses from Supabase ──────────────────────────────────────
+  const fetchSavedPhotos = useCallback(async () => {
+    setDbLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      let query = supabase
+        .from('food_analyses')
+        .select('*')
+        .order('analyzed_at', { ascending: false });
+
+      if (user) {
+        query = query.eq('user_id', user.id);
+      } else {
+        query = query.is('user_id', null);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setSavedPhotos((data ?? []).map(mapRow));
+    } catch (err: any) {
+      console.error('fetchSavedPhotos error:', err?.message);
+    } finally {
+      setDbLoading(false);
+    }
+  }, []);
+
+  // ── Realtime subscription ────────────────────────────────────────────────────
+  useEffect(() => {
+    fetchSavedPhotos();
+
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      const filter = user
+        ? `user_id=eq.${user.id}`
+        : 'user_id=is.null';
+
+      const channel = supabase
+        .channel('food_analyses_realtime')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'food_analyses',
+          filter,
+        }, () => fetchSavedPhotos())
+        .subscribe();
+
+      return () => { supabase.removeChannel(channel); };
+    });
+  }, [fetchSavedPhotos]);
+
+  // ── Take picture ─────────────────────────────────────────────────────────────
+  const takePicture = async () => {
+    if (!cameraRef.current || isTakingPicture) return;
+    try {
+      setIsTakingPicture(true);
+      setAnalysisResult(null);
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8, skipProcessing: false });
+      if (photo?.uri) {
+        setLastPhoto(photo.uri);
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to take picture. Please try again.');
+    } finally {
+      setIsTakingPicture(false);
+    }
   };
 
+  // ── Analyze with Claude + save to Supabase ───────────────────────────────────
   const handleAnalyzeFood = async () => {
     if (!lastPhoto) return;
-    
     try {
       setIsAnalyzing(true);
-      const result = await analyzeFoodWithAI(lastPhoto);
-      setAnalysisResult(result);
-      
-      // Create food entry
-      const foodEntry: FoodEntry = {
-        id: Date.now().toString(),
-        imageUri: lastPhoto,
-        foodName: result.foodName,
-        calories: result.calories,
-        benefits: result.benefits,
-        timestamp: new Date().toISOString(),
-      };
-      
-      // Auto-save to local storage container
-      await savePhoto(foodEntry);
 
-      // Pass to parent if callback provided
-      if (onFoodAnalyzed) {
-        onFoodAnalyzed(foodEntry);
+      // 1. Run Claude Vision analysis
+      const result = await analyzeFoodWithClaude(lastPhoto);
+      setAnalysisResult(result);
+
+      // 2. Get current user (nullable — guests allowed)
+      const { data: { user } } = await supabase.auth.getUser();
+      const userId = user?.id ?? null;
+
+      // 3. Upload image to Supabase Storage
+      const base64 = await uriToBase64(lastPhoto);
+      const fileName = `food_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+      const filePath = userId ? `${userId}/${fileName}` : `guest/${fileName}`;
+      const arrayBuffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+      const { error: uploadError } = await supabase.storage
+        .from('food-images')
+        .upload(filePath, arrayBuffer, { contentType: 'image/jpeg', upsert: false });
+
+      let imageUrl = lastPhoto; // fallback to local URI
+      if (!uploadError) {
+        const { data: urlData } = supabase.storage
+          .from('food-images')
+          .getPublicUrl(filePath);
+        imageUrl = urlData.publicUrl;
+      } else {
+        console.warn('Storage upload failed (using local URI):', uploadError.message);
       }
-      
-      Alert.alert(
-        'Analysis Complete',
-        `Detected: ${result.foodName}\nCalories: ${result.calories}`,
-        [{ text: 'OK' }]
-      );
-    } catch (error) {
-      Alert.alert('Error', 'Failed to analyze food. Please try again.');
-      console.error('Food analysis error:', error);
+
+      // 4. Insert row into food_analyses
+      const { data: inserted, error: insertError } = await supabase
+        .from('food_analyses')
+        .insert({
+          user_id: userId,
+          image_url: imageUrl,
+          food_name: result.foodName,
+          calories: result.calories,
+          benefits: result.benefits,
+          nutrients: result.nutrients,
+          analyzed_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      const foodEntry: FoodEntry = mapRow(inserted);
+
+      // 5. Optimistic UI — prepend to local list immediately
+      setSavedPhotos(prev => [foodEntry, ...prev]);
+
+      if (onFoodAnalyzed) onFoodAnalyzed(foodEntry);
+
+    } catch (err: any) {
+      console.error('Analysis error:', err);
+      Alert.alert('Analysis Failed', err?.message ?? 'Please try again.');
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const takePicture = async () => {
-    if (cameraRef.current && !isTakingPicture) {
-      try {
-        setIsTakingPicture(true);
-        setAnalysisResult(null); // Reset previous analysis
-        const photo = await cameraRef.current.takePictureAsync({
-          quality: 0.8,
-          skipProcessing: false,
-        });
-        
-        if (photo?.uri) {
-          setLastPhoto(photo.uri);
-          Alert.alert('Photo Captured', 'Photo taken successfully! Tap "Analyze Food" to scan calories and benefits.');
-        }
-      } catch (error) {
-        Alert.alert('Error', 'Failed to take picture. Please try again.');
-        console.error('Take picture error:', error);
-      } finally {
-        setIsTakingPicture(false);
-      }
-    }
+  // ── Delete entry ──────────────────────────────────────────────────────────────
+  const handleDelete = async (entry: FoodEntry) => {
+    Alert.alert('Delete', `Remove "${entry.foodName}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          // Optimistic remove
+          setSavedPhotos(prev => prev.filter(p => p.id !== entry.id));
+
+          const { error } = await supabase
+            .from('food_analyses')
+            .delete()
+            .eq('id', entry.id);
+
+          if (error) {
+            console.error('Delete error:', error.message);
+            fetchSavedPhotos(); // re-sync on failure
+          }
+        },
+      },
+    ]);
   };
 
-  // If permissions are not granted yet
+  // ── Permissions ───────────────────────────────────────────────────────────────
   if (!permission) {
     return (
       <View style={styles.container}>
-        <Text style={styles.message}>Requesting camera permission...</Text>
+        <Text style={styles.message}>Requesting camera permission…</Text>
       </View>
     );
   }
 
-  // If camera permission is denied
   if (!permission.granted) {
     return (
       <View style={styles.container}>
         <View style={styles.permissionContainer}>
           <Icon name="camera" style={styles.permissionIcon} />
-          <Text style={styles.permissionTitle}>Camera Permission Required</Text>
+          <Text style={styles.permissionTitle}>Camera Access Required</Text>
           <Text style={styles.permissionText}>
-            We need camera access to take photos of your meals and fitness activities.
+            Point your camera at any meal to instantly get calorie counts and nutritional insights powered by Claude AI.
           </Text>
           <Pressable style={styles.permissionButton} onPress={requestPermission}>
-            <Text style={styles.permissionButtonText}>Grant Permission</Text>
+            <Text style={styles.permissionButtonText}>Enable Camera</Text>
           </Pressable>
           <Pressable style={styles.closePermissionButton} onPress={onClose}>
             <Text style={styles.closePermissionButtonText}>Go Back</Text>
@@ -180,221 +329,297 @@ export default function CameraScreen({ onClose, onFoodAnalyzed }: CameraScreenPr
     );
   }
 
+  // ── Main render ───────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <CameraView
-        ref={cameraRef}
-        style={styles.camera}
-        facing={facing}
-        mode="picture"
-      >
-        {/* Header with close and flip buttons */}
+      <CameraView ref={cameraRef} style={styles.camera} facing={facing} mode="picture">
+
+        {/* Header */}
         <View style={styles.header}>
           <Pressable style={styles.headerButton} onPress={onClose}>
             <Icon name="times" style={styles.headerIcon} />
           </Pressable>
-          <Pressable style={styles.headerButton} onPress={toggleFacing}>
+          <View style={styles.headerCenter}>
+            <Icon5 name="brain" size={14} color="#c67ee2" />
+            <Text style={styles.headerLabel}>AI Food Scanner</Text>
+          </View>
+          <Pressable style={styles.headerButton} onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}>
             <Icon name="refresh" style={styles.headerIcon} />
           </Pressable>
         </View>
 
-        {/* Last photo preview */}
+        {/* Viewfinder overlay */}
+        {!lastPhoto && !isAnalyzing && (
+          <View style={styles.viewfinderContainer}>
+            <View style={styles.viewfinderCornerTL} />
+            <View style={styles.viewfinderCornerTR} />
+            <View style={styles.viewfinderCornerBL} />
+            <View style={styles.viewfinderCornerBR} />
+            <Text style={styles.viewfinderHint}>Frame your meal</Text>
+          </View>
+        )}
+
+        {/* Photo preview thumbnail */}
         {lastPhoto && (
           <View style={styles.photoPreview}>
             <Image source={{ uri: lastPhoto }} style={styles.previewImage} />
-            <Pressable 
-              style={styles.clearPhotoButton} 
-              onPress={() => {
-                setLastPhoto(null);
-                setAnalysisResult(null);
-              }}
+            <Pressable
+              style={styles.clearPhotoButton}
+              onPress={() => { setLastPhoto(null); setAnalysisResult(null); }}
             >
               <Icon name="times-circle" style={styles.clearPhotoIcon} />
             </Pressable>
           </View>
         )}
 
-        {/* Analysis Result Display */}
-        {analysisResult && (
+        {/* Analysis result card */}
+        {analysisResult && !isAnalyzing && (
           <View style={styles.resultContainer}>
             <View style={styles.resultCard}>
-              <Text style={styles.resultTitle}>{analysisResult.foodName}</Text>
+              <View style={styles.resultHeader}>
+                <Icon5 name="utensils" size={14} color="#c67ee2" />
+                <Text style={styles.resultTitle} numberOfLines={1}>{analysisResult.foodName}</Text>
+              </View>
               <View style={styles.caloriesRow}>
                 <Icon name="fire" style={styles.caloriesIcon} />
-                <Text style={styles.caloriesText}>{analysisResult.calories} kcal</Text>
+                <Text style={styles.caloriesText}>{analysisResult.calories}</Text>
+                <Text style={styles.caloriesUnit}> kcal</Text>
               </View>
-              <Text style={styles.benefitsLabel}>Benefits:</Text>
-              <ScrollView style={styles.benefitsScroll}>
+              {analysisResult.nutrients ? (
+                <Text style={styles.nutrientsText} numberOfLines={2}>{analysisResult.nutrients}</Text>
+              ) : null}
+              <Text style={styles.benefitsLabel}>Benefits</Text>
+              <ScrollView style={styles.benefitsScroll} nestedScrollEnabled>
                 <Text style={styles.benefitsText}>{analysisResult.benefits}</Text>
               </ScrollView>
+              <View style={styles.savedBadge}>
+                <Icon name="cloud-upload" size={10} color="#4CAF50" />
+                <Text style={styles.savedBadgeText}> Saved to database</Text>
+              </View>
             </View>
           </View>
         )}
 
-        {/* Loading Indicator */}
+        {/* Analyzing overlay */}
         {isAnalyzing && (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#c67ee2" />
-            <Text style={styles.loadingText}>Analyzing food...</Text>
-            <Text style={styles.loadingSubtext}>AI is scanning your meal</Text>
+            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+              <Icon5 name="brain" size={40} color="#c67ee2" />
+            </Animated.View>
+            <Text style={styles.loadingText}>Analyzing{analyzingDots}</Text>
+            <Text style={styles.loadingSubtext}>Claude AI is reading your meal</Text>
+            <ActivityIndicator size="small" color="#c67ee2" style={{ marginTop: 12 }} />
           </View>
         )}
 
-        {/* Camera controls */}
-        <Pressable 
-            style={[styles.captureButton, isTakingPicture && styles.captureButtonDisabled]} 
-            onPress={takePicture}
-            disabled={isTakingPicture || isAnalyzing}
-          >
-            <View style={styles.captureButtonInner} />
-          </Pressable>
+        {/* Capture button */}
+        <Pressable
+          style={[styles.captureButton, (isTakingPicture || isAnalyzing) && styles.captureButtonDisabled]}
+          onPress={takePicture}
+          disabled={isTakingPicture || isAnalyzing}
+        >
+          <View style={styles.captureButtonInner} />
+        </Pressable>
+
+        {/* Bottom controls */}
         <View style={styles.controls}>
-          
-          {/* Analyze Food Button */}
-          <Pressable 
-            style={[styles.analyzeButton, (!lastPhoto || isAnalyzing) && styles.analyzeButtonDisabled]} 
+          <Pressable
+            style={[styles.controlBtn, styles.analyzeButton, (!lastPhoto || isAnalyzing) && styles.btnDisabled]}
             onPress={handleAnalyzeFood}
             disabled={!lastPhoto || isAnalyzing}
           >
-            <Icon name="search" style={styles.analyzeIcon} />
-            <Text style={styles.analyzeText}>Analyze</Text>
+            <Icon5 name="brain" size={16} color={lastPhoto && !isAnalyzing ? '#2ea1ff' : '#666'} />
+            <Text style={[styles.controlBtnText, (!lastPhoto || isAnalyzing) && styles.btnDisabledText]}>
+              Analyze
+            </Text>
           </Pressable>
 
-          
-        {/* View Saved Button */}
-        {savedPhotos.length > 0 && (
-          <Pressable 
-            style={styles.viewSavedBtn}
-            onPress={() => setShowStorageModal(true)}
+          <Pressable
+            style={[styles.controlBtn, styles.savedBtn]}
+            onPress={() => { fetchSavedPhotos(); setShowStorageModal(true); }}
           >
-            <Icon name="folder-open" style={styles.viewSavedIcon} />
-            <Text style={styles.viewSavedText}>Saved ({savedPhotos.length})</Text>
+            <Icon name="folder-open" size={16} color="#fcb92a" />
+            <Text style={styles.controlBtnText}>
+              Saved {savedPhotos.length > 0 ? `(${savedPhotos.length})` : ''}
+            </Text>
           </Pressable>
-        )}
-      </View>
-        {/* Instructions */}
-        <View style={styles.instructions}>
-          <Text style={styles.instructionText}>
-            {facing === 'back' ? 'Point at your meal' : 'Take a selfie!'}
-          </Text>
         </View>
 
       </CameraView>
 
-      {/* Storage Modal */}
+      {/* ── Saved Photos Modal ─────────────────────────────────────────────── */}
       <Modal
         visible={showStorageModal}
         animationType="slide"
         presentationStyle="overFullScreen"
         onRequestClose={() => setShowStorageModal(false)}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setShowStorageModal(false)} />
         <View style={styles.modalContainer}>
+          {/* Modal header */}
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Saved Photos ({savedPhotos.length})</Text>
+            <View style={styles.modalHeaderLeft}>
+              <Icon5 name="database" size={18} color="#c67ee2" />
+              <Text style={styles.modalTitle}>  Food History</Text>
+            </View>
             <Pressable onPress={() => setShowStorageModal(false)}>
               <Icon name="times" style={styles.modalCloseIcon} />
             </Pressable>
           </View>
-          {savedPhotos.length === 0 ? (
+
+          {/* Stats bar */}
+          {savedPhotos.length > 0 && (
+            <View style={styles.statsBar}>
+              <View style={styles.statChip}>
+                <Icon name="camera" size={12} color="#c67ee2" />
+                <Text style={styles.statText}> {savedPhotos.length} scans</Text>
+              </View>
+              <View style={styles.statChip}>
+                <Icon name="fire" size={12} color="#F3AF41" />
+                <Text style={styles.statText}>
+                  {' '}{savedPhotos.reduce((s, p) => s + p.calories, 0)} kcal total
+                </Text>
+              </View>
+              <Pressable onPress={fetchSavedPhotos} style={styles.statChip}>
+                <Icon name="refresh" size={12} color="#84d7f4" />
+                <Text style={[styles.statText, { color: '#84d7f4' }]}> Refresh</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {dbLoading ? (
             <View style={styles.emptyState}>
-              <Icon name="camera" style={styles.emptyIcon} />
-              <Text style={styles.emptyText}>No saved photos yet</Text>
-              <Text style={styles.emptySubtext}>Take & analyze photos to save them here</Text>
+              <ActivityIndicator size="large" color="#c67ee2" />
+              <Text style={styles.emptyText}>Loading from Supabase…</Text>
+            </View>
+          ) : savedPhotos.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Icon5 name="camera-retro" size={60} color="#333" />
+              <Text style={styles.emptyText}>No analyses yet</Text>
+              <Text style={styles.emptySubtext}>Take a photo of your meal and tap Analyze to get started</Text>
             </View>
           ) : (
             <FlatList
               data={savedPhotos}
-              keyExtractor={(item) => item.id}
+              keyExtractor={item => item.id}
               contentContainerStyle={styles.modalList}
               renderItem={({ item }) => (
-                <View style={styles.modalPhotoItem}>
-                  <Image source={{ uri: item.imageUri }} style={styles.modalPhotoThumb} />
-                  <View style={styles.modalPhotoInfo}>
-                    <Text style={styles.modalFoodName}>{item.foodName}</Text>
-                    <View style={styles.modalCaloriesRow}>
-                      <Icon name="fire" style={styles.modalCaloriesIcon} />
-                      <Text style={styles.modalCalories}>{item.calories} kcal</Text>
+                <Pressable
+                  style={styles.photoCard}
+                  onPress={() => { setSelectedPhoto(item); setShowPhotoDetailsModal(true); }}
+                >
+                  {/* Food image */}
+                  <Image
+                    source={{ uri: item.imageUri || item.imageUrl }}
+                    style={styles.photoCardImage}
+                  />
+
+                  {/* Info */}
+                  <View style={styles.photoCardInfo}>
+                    <Text style={styles.photoCardName} numberOfLines={1}>{item.foodName}</Text>
+                    <View style={styles.photoCardCalRow}>
+                      <Icon name="fire" size={14} color="#F3AF41" />
+                      <Text style={styles.photoCardCal}> {item.calories} kcal</Text>
                     </View>
-                    <Text style={styles.modalTimestamp}>{new Date(item.timestamp).toLocaleString()}</Text>
+                    {item.nutrients ? (
+                      <Text style={styles.photoCardNutrients} numberOfLines={1}>{item.nutrients}</Text>
+                    ) : null}
+                    <Text style={styles.photoCardTime}>
+                      {new Date(item.timestamp).toLocaleString()}
+                    </Text>
                   </View>
-                  <Pressable 
-                    style={styles.modalDeleteBtn}
-                    onPress={async () => {
-                      const updated = savedPhotos.filter(p => p.id !== item.id);
-                      setSavedPhotos(updated);
-                      await AsyncStorage.setItem(PHOTO_STORAGE_KEY, JSON.stringify(updated));
-                    }}
-                  >
-                    <Icon name="trash" style={styles.modalDeleteIcon} />
-                  </Pressable>
-                  <Pressable 
-                    style={styles.modalDetailsBtn}
-                    onPress={() => {
-                      setSelectedPhoto(item);
-                      setShowPhotoDetailsModal(true);
-                    }}
-                  >
-                    <Icon name="eye" style={styles.modalDetailsIcon} />
-                  </Pressable>
-                </View>
+
+                  {/* Actions */}
+                  <View style={styles.photoCardActions}>
+                    <Pressable
+                      style={styles.cardActionBtn}
+                      onPress={() => { setSelectedPhoto(item); setShowPhotoDetailsModal(true); }}
+                    >
+                      <Icon name="eye" size={16} color="#4CAF50" />
+                    </Pressable>
+                    <Pressable style={[styles.cardActionBtn, styles.cardDeleteBtn]} onPress={() => handleDelete(item)}>
+                      <Icon name="trash" size={16} color="#FF4444" />
+                    </Pressable>
+                  </View>
+                </Pressable>
               )}
             />
-          )}
-          {savedPhotos.length > 0 && (
-            <Pressable 
-              style={styles.clearAllModalBtn}
-              onPress={async () => {
-                setSavedPhotos([]);
-                await AsyncStorage.removeItem(PHOTO_STORAGE_KEY);
-                setShowStorageModal(false);
-              }}
-            >
-              <Text style={styles.clearAllModalText}>Clear All Photos</Text>
-            </Pressable>
           )}
         </View>
       </Modal>
 
-      {/* Photo Details Modal */}
+      {/* ── Photo Details Modal ───────────────────────────────────────────── */}
       <Modal
         visible={showPhotoDetailsModal}
         animationType="slide"
         presentationStyle="overFullScreen"
         onRequestClose={() => setShowPhotoDetailsModal(false)}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setShowPhotoDetailsModal(false)} />
-        <View style={styles.photoDetailsContainer}>
-          <View style={styles.photoDetailsHeader}>
-            <Pressable onPress={() => setShowPhotoDetailsModal(false)}>
-              <Icon name="times" style={styles.modalCloseIcon} />
-            </Pressable>
-          </View>
+        <View style={styles.detailsContainer}>
           {selectedPhoto && (
             <>
-              <Image source={{ uri: selectedPhoto.imageUri }} style={styles.photoDetailsImage} />
-              <View style={styles.photoDetailsContent}>
-                <Text style={styles.photoDetailsTitle}>{selectedPhoto.foodName}</Text>
-                <View style={styles.photoDetailsCaloriesRow}>
-                  <Icon name="fire" style={styles.photoDetailsCaloriesIcon} />
-                  <Text style={styles.photoDetailsCalories}>{selectedPhoto.calories} kcal</Text>
-                </View>
-                <Text style={styles.photoDetailsBenefitsLabel}>Benefits:</Text>
-                <ScrollView style={styles.photoDetailsBenefitsScroll}>
-                  <Text style={styles.photoDetailsBenefitsText}>{selectedPhoto.benefits}</Text>
-                </ScrollView>
-                <Text style={styles.photoDetailsTimestamp}>
-                  {new Date(selectedPhoto.timestamp).toLocaleString()}
-                </Text>
-              </View>
-              <Pressable 
-                style={styles.backToStorageBtn}
-                onPress={() => {
-                  setShowPhotoDetailsModal(false);
-                  setSelectedPhoto(null);
-                }}
+              <Image
+                source={{ uri: selectedPhoto.imageUri || selectedPhoto.imageUrl }}
+                style={styles.detailsImage}
+              />
+
+              {/* Close button overlay */}
+              <Pressable
+                style={styles.detailsCloseBtn}
+                onPress={() => { setShowPhotoDetailsModal(false); setSelectedPhoto(null); }}
               >
-                <Text style={styles.backToStorageText}>← Back to Storage</Text>
+                <Icon name="times" size={18} color="#fff" />
+              </Pressable>
+
+              <ScrollView style={styles.detailsScroll} contentContainerStyle={styles.detailsContent}>
+                {/* Food name + AI badge */}
+                <View style={styles.detailsNameRow}>
+                  <Text style={styles.detailsTitle}>{selectedPhoto.foodName}</Text>
+                  <View style={styles.aiBadge}>
+                    <Icon5 name="brain" size={10} color="#c67ee2" />
+                    <Text style={styles.aiBadgeText}> AI</Text>
+                  </View>
+                </View>
+
+                {/* Calories */}
+                <View style={styles.detailsCalRow}>
+                  <Icon name="fire" size={28} color="#F3AF41" />
+                  <Text style={styles.detailsCal}> {selectedPhoto.calories}</Text>
+                  <Text style={styles.detailsCalUnit}> kcal</Text>
+                </View>
+
+                {/* Nutrients */}
+                {selectedPhoto.nutrients ? (
+                  <View style={styles.nutrientsCard}>
+                    <Icon5 name="leaf" size={12} color="#4CAF50" />
+                    <Text style={styles.nutrientsCardText}> {selectedPhoto.nutrients}</Text>
+                  </View>
+                ) : null}
+
+                {/* Benefits */}
+                <Text style={styles.detailsSectionLabel}>Health Benefits</Text>
+                <Text style={styles.detailsBenefits}>{selectedPhoto.benefits}</Text>
+
+                {/* Metadata */}
+                <View style={styles.detailsMeta}>
+                  <Icon5 name="clock" size={12} color="#666" />
+                  <Text style={styles.detailsTime}>
+                    {' '}{new Date(selectedPhoto.timestamp).toLocaleString()}
+                  </Text>
+                </View>
+                {selectedPhoto.imageUrl && (
+                  <View style={styles.detailsMeta}>
+                    <Icon name="cloud" size={12} color="#4CAF50" />
+                    <Text style={[styles.detailsTime, { color: '#4CAF50' }]}> Stored in Supabase</Text>
+                  </View>
+                )}
+              </ScrollView>
+
+              <Pressable
+                style={styles.detailsBackBtn}
+                onPress={() => { setShowPhotoDetailsModal(false); setSelectedPhoto(null); }}
+              >
+                <Icon name="arrow-left" size={14} color="#c67ee2" />
+                <Text style={styles.detailsBackText}>  Back to History</Text>
               </Pressable>
             </>
           )}
@@ -404,504 +629,217 @@ export default function CameraScreen({ onClose, onFoodAnalyzed }: CameraScreenPr
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#15041f',
-  },
+  container: { flex: 1, backgroundColor: '#15041f' },
+  message: { color: '#FFFFFF', fontSize: 18, textAlign: 'center', padding: 20 },
+  camera: { flex: 1, width: '100%', height: '100%' },
 
-  message: {
-    color: '#FFFFFF',
-    fontSize: 18,
-  },
-  camera: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-  },
+  // Header
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: 50,
-    paddingHorizontal: 20,
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', paddingTop: 50, paddingHorizontal: 20,
   },
   headerButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 46, height: 46, borderRadius: 23,
+    backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center',
   },
-  headerIcon: {
-    fontSize: 24,
-    color: '#FFFFFF',
+  headerIcon: { fontSize: 20, color: '#FFFFFF' },
+  headerCenter: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    gap: 6,
   },
-  controls: {
-    position: 'absolute',
-    bottom: 60,
-    width: "100%",
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    alignItems: 'center',
+  headerLabel: { fontSize: 13, fontWeight: '700', color: '#c67ee2', letterSpacing: 0.5 },
+
+  // Viewfinder
+  viewfinderContainer: {
+    position: 'absolute', top: '25%', left: '15%',
+    width: '70%', height: '40%', justifyContent: 'center', alignItems: 'center',
   },
-  captureButton: {
-    position:'absolute',
-    bottom: 100,
-    left: 160,
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 4,
-    borderColor: '#1e1929',
+  viewfinderCornerTL: {
+    position: 'absolute', top: 0, left: 0,
+    width: 30, height: 30, borderTopWidth: 3, borderLeftWidth: 3, borderColor: '#c67ee2',
   },
-  captureButtonDisabled: {
-    opacity: 0.5,
+  viewfinderCornerTR: {
+    position: 'absolute', top: 0, right: 0,
+    width: 30, height: 30, borderTopWidth: 3, borderRightWidth: 3, borderColor: '#c67ee2',
   },
-  captureButtonInner: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#1e1929',
+  viewfinderCornerBL: {
+    position: 'absolute', bottom: 0, left: 0,
+    width: 30, height: 30, borderBottomWidth: 3, borderLeftWidth: 3, borderColor: '#c67ee2',
   },
-  analyzeButton: {
-    position: 'relative',
-    width: 120,
-    height: 50,
-    left: -25,
-    backgroundColor: '#1e1929',
-    borderRadius: 25,
-    flexDirection:'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+  viewfinderCornerBR: {
+    position: 'absolute', bottom: 0, right: 0,
+    width: 30, height: 30, borderBottomWidth: 3, borderRightWidth: 3, borderColor: '#c67ee2',
   },
-  analyzeButtonDisabled: {
-    opacity: 0.5,
-  },
-  analyzeIcon: {
-    fontSize: 20,
-    color: '#2ea1ff',
-    marginRight: 8,
-  },
-  analyzeText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  instructions: {
-    position: 'absolute',
-    top: 50,
-    left: 125,
-    width: 150, 
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    borderRadius: 20,
-  },
-  instructionText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-  },
-  permissionContainer: {
-    alignItems: 'center',
-    padding: 30,
-  },
-  permissionIcon: {
-    fontSize: 60,
-    color: '#c67ee2',
-    marginBottom: 20,
-  },
-  permissionTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  permissionText: {
-    fontSize: 16,
-    color: '#CCCCCC',
-    textAlign: 'center',
-    marginBottom: 30,
-    lineHeight: 24,
-  },
-  permissionButton: {
-    backgroundColor: '#c67ee2',
-    paddingHorizontal: 30,
-    paddingVertical: 15,
-    borderRadius: 25,
-    marginBottom: 15,
-  },
-  permissionButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  closePermissionButton: {
-    paddingHorizontal: 30,
-    paddingVertical: 15,
-  },
-  closePermissionButtonText: {
-    fontSize: 16,
-    color: '#CCCCCC',
-  },
+  viewfinderHint: { fontSize: 13, color: 'rgba(255,255,255,0.6)', letterSpacing: 0.5 },
+
+  // Photo preview
   photoPreview: {
-    position: 'absolute',
-    top: 120,
-    right: 20,
-    width: 100,
-    height: 100,
-    borderRadius: 10,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: '#c67ee2',
+    position: 'absolute', top: 115, right: 15,
+    width: 90, height: 90, borderRadius: 12,
+    overflow: 'hidden', borderWidth: 2, borderColor: '#c67ee2',
   },
-  previewImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  clearPhotoButton: {
-    position: 'absolute',
-    top: 5,
-    right: 5,
-  },
-  clearPhotoIcon: {
-    fontSize: 24,
-    color: '#FF4444',
-  },
-  resultContainer: {
-    position: 'absolute',
-    top: 120,
-    left: 20,
-    right: 130,
-  },
+  previewImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  clearPhotoButton: { position: 'absolute', top: 4, right: 4 },
+  clearPhotoIcon: { fontSize: 20, color: '#FF4444' },
+
+  // Result card
+  resultContainer: { position: 'absolute', top: 115, left: 15, right: 115 },
   resultCard: {
-    backgroundColor: 'rgba(33, 28, 36, 0.95)',
-    borderRadius: 15,
-    padding: 15,
-    borderWidth: 2,
-    borderColor: '#c67ee2',
+    backgroundColor: 'rgba(21,4,31,0.96)', borderRadius: 16,
+    padding: 14, borderWidth: 1.5, borderColor: '#c67ee2',
   },
-  resultTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 8,
+  resultHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  resultTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', flex: 1 },
+  caloriesRow: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 4 },
+  caloriesIcon: { fontSize: 16, color: '#F3AF41', marginRight: 6 },
+  caloriesText: { fontSize: 22, fontWeight: '800', color: '#F3AF41' },
+  caloriesUnit: { fontSize: 13, color: '#F3AF41', opacity: 0.8 },
+  nutrientsText: { fontSize: 11, color: '#84d7f4', marginBottom: 6, lineHeight: 15 },
+  benefitsLabel: { fontSize: 11, fontWeight: '700', color: '#c67ee2', marginBottom: 3 },
+  benefitsScroll: { maxHeight: 60 },
+  benefitsText: { fontSize: 11, color: '#CCCCCC', lineHeight: 16 },
+  savedBadge: {
+    flexDirection: 'row', alignItems: 'center', marginTop: 8,
+    paddingTop: 6, borderTopWidth: 1, borderTopColor: 'rgba(198,126,226,0.2)',
   },
-  caloriesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  caloriesIcon: {
-    fontSize: 18,
-    color: '#F3AF41',
-    marginRight: 8,
-  },
-  caloriesText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#F3AF41',
-  },
-  benefitsLabel: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#c67ee2',
-    marginBottom: 4,
-  },
-  benefitsScroll: {
-    maxHeight: 80,
-  },
-  benefitsText: {
-    fontSize: 12,
-    color: '#CCCCCC',
-    lineHeight: 18,
-  },
+  savedBadgeText: { fontSize: 10, color: '#4CAF50' },
+
+  // Loading
   loadingContainer: {
-    position: 'absolute',
-    top: '40%',
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(33, 28, 36, 0.95)',
-    borderRadius: 20,
-    padding: 30,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#c67ee2',
+    position: 'absolute', top: '35%', left: 20, right: 20,
+    backgroundColor: 'rgba(21,4,31,0.97)', borderRadius: 24,
+    padding: 32, alignItems: 'center', borderWidth: 1.5, borderColor: '#c67ee2',
   },
-  loadingText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginTop: 15,
-  },
-  loadingSubtext: {
-    fontSize: 14,
-    color: '#CCCCCC',
-    marginTop: 5,
-  },
+  loadingText: { fontSize: 22, fontWeight: '800', color: '#FFFFFF', marginTop: 16 },
+  loadingSubtext: { fontSize: 13, color: '#CCCCCC', marginTop: 4 },
 
-  // View Saved Button Styles
-  viewSavedBtn: {
-    position: 'relative',
-    width: 120,
-    height: 50,
-    right: -25,
-    backgroundColor: '#1e1929',
-    borderRadius: 25,
-    flexDirection:'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 10,
+  // Capture
+  captureButton: {
+    position: 'absolute', bottom: 110, alignSelf: 'center',
+    width: 76, height: 76, borderRadius: 38,
+    backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center',
+    borderWidth: 4, borderColor: '#c67ee2', left: '37%',
   },
-  viewSavedIcon: {
-    fontSize: 20,
-    color: '#fcb92a',
-    marginRight: 8,
-    marginLeft: 5,
-  },
-  viewSavedText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    flex: 1,
-  },
+  captureButtonDisabled: { opacity: 0.4 },
+  captureButtonInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#15041f' },
 
-  // Modal Overlay and Container
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  // Bottom controls
+  controls: {
+    position: 'absolute', bottom: 50, width: '100%',
+    flexDirection: 'row', justifyContent: 'space-evenly', alignItems: 'center',
   },
-  modalContainer: {
-    position: 'absolute',
-    bottom: 0,
-    width: "100%",
-    height: "100%",
-    backgroundColor: '#1e1e1f',
+  controlBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 20, paddingVertical: 13, borderRadius: 25,
+    gap: 8, minWidth: 120,
   },
+  analyzeButton: { backgroundColor: 'rgba(21,4,31,0.9)', borderWidth: 1, borderColor: '#2ea1ff' },
+  savedBtn: { backgroundColor: 'rgba(21,4,31,0.9)', borderWidth: 1, borderColor: '#fcb92a' },
+  controlBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  btnDisabled: { opacity: 0.4, borderColor: '#444' },
+  btnDisabledText: { color: '#666' },
 
-  // Modal Header
+  // Permission
+  permissionContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 30 },
+  permissionIcon: { fontSize: 64, color: '#c67ee2', marginBottom: 20 },
+  permissionTitle: { fontSize: 24, fontWeight: '800', color: '#FFFFFF', marginBottom: 12, textAlign: 'center' },
+  permissionText: { fontSize: 15, color: '#CCCCCC', textAlign: 'center', lineHeight: 22, marginBottom: 32 },
+  permissionButton: {
+    backgroundColor: '#c67ee2', paddingHorizontal: 36, paddingVertical: 16,
+    borderRadius: 28, marginBottom: 12,
+  },
+  permissionButtonText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  closePermissionButton: { paddingVertical: 12 },
+  closePermissionButtonText: { fontSize: 15, color: '#888' },
+
+  // Storage Modal
+  modalContainer: { flex: 1, backgroundColor: '#12001a' },
   modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 25,
-    paddingVertical: 20,
-    borderBottomWidth: 3,
-    borderBottomColor: '#4d4d4d',
-    marginBottom: 12,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 22, paddingVertical: 20, paddingTop: 55,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(198,126,226,0.2)',
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    flex: 1,
-  },
-  modalCloseIcon: {
-    fontSize: 24,
-    color: '#CCCCCC',
-  },
+  modalHeaderLeft: { flexDirection: 'row', alignItems: 'center' },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: '#FFFFFF' },
+  modalCloseIcon: { fontSize: 22, color: '#888' },
 
-  // Empty State
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
+  // Stats bar
+  statsBar: {
+    flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingVertical: 12,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
   },
-  emptyIcon: {
-    fontSize: 60,
-    color: '#666666',
-    marginBottom: 20,
+  statChip: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 10,
+    paddingVertical: 6, borderRadius: 20,
   },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#CCCCCC',
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#999999',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+  statText: { fontSize: 12, color: '#CCCCCC', fontWeight: '600' },
 
-  // Modal List and Photo Items
-  modalList: {
-    flexGrow: 0,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-  },
-  modalPhotoItem: {
-    flexDirection: 'row',
-    backgroundColor: '#3b3b3b',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  modalPhotoThumb: {
-    width: 70,
-    height: 70,
-    borderRadius: 12,
-    marginRight: 16,
-    backgroundColor: '#333',
-  },
-  modalPhotoInfo: {
-    flex: 1,
-  },
-  modalFoodName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 6,
-  },
-  modalCaloriesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  modalCaloriesIcon: {
-    fontSize: 16,
-    color: '#F3AF41',
-    marginRight: 8,
-  },
-  modalCalories: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#F3AF41',
-  },
-  modalTimestamp: {
-    fontSize: 12,
-    color: '#999999',
-  },
+  // Empty state
+  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60, gap: 12 },
+  emptyText: { fontSize: 18, fontWeight: '600', color: '#CCCCCC' },
+  emptySubtext: { fontSize: 13, color: '#666', textAlign: 'center', lineHeight: 20, paddingHorizontal: 40 },
 
-  // Delete Button
-  modalDeleteBtn: {
-    padding: 8,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255, 68, 68, 0.2)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 68, 68, 0.4)',
+  // Photo card
+  modalList: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 30 },
+  photoCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#1e1031', borderRadius: 16,
+    marginBottom: 10, overflow: 'hidden',
+    borderWidth: 1, borderColor: 'rgba(198,126,226,0.15)',
   },
-  modalDeleteIcon: {
-    fontSize: 20,
-    color: '#FF4444',
+  photoCardImage: { width: 80, height: 80, resizeMode: 'cover' },
+  photoCardInfo: { flex: 1, padding: 12, gap: 3 },
+  photoCardName: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+  photoCardCalRow: { flexDirection: 'row', alignItems: 'center' },
+  photoCardCal: { fontSize: 14, fontWeight: '700', color: '#F3AF41' },
+  photoCardNutrients: { fontSize: 11, color: '#84d7f4' },
+  photoCardTime: { fontSize: 11, color: '#555' },
+  photoCardActions: { flexDirection: 'column', gap: 6, paddingRight: 12 },
+  cardActionBtn: {
+    width: 34, height: 34, borderRadius: 10,
+    backgroundColor: 'rgba(76,175,80,0.15)',
+    justifyContent: 'center', alignItems: 'center',
   },
+  cardDeleteBtn: { backgroundColor: 'rgba(255,68,68,0.15)' },
 
-  // View Details Button
-  modalDetailsBtn: {
-    padding: 8,
-    borderRadius: 10,
-    backgroundColor: 'rgba(76, 175, 80, 0.2)',
-    borderWidth: 1,
-    borderColor: 'rgba(76, 175, 80, 0.4)',
-    marginLeft: 8,
+  // Photo Details Modal
+  detailsContainer: { flex: 1, backgroundColor: '#12001a' },
+  detailsImage: { width: '100%', height: 280, resizeMode: 'cover' },
+  detailsCloseBtn: {
+    position: 'absolute', top: 50, right: 18,
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center',
   },
-  modalDetailsIcon: {
-    fontSize: 20,
-    color: '#4CAF50',
+  detailsScroll: { flex: 1 },
+  detailsContent: { padding: 24, paddingBottom: 12 },
+  detailsNameRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 10 },
+  detailsTitle: { fontSize: 24, fontWeight: '800', color: '#FFFFFF', flex: 1 },
+  aiBadge: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(198,126,226,0.2)', paddingHorizontal: 8,
+    paddingVertical: 4, borderRadius: 10,
   },
-
-  // Photo Details Modal Styles
-  photoDetailsContainer: {
-    position: 'absolute',
-    bottom: 0,
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#1e1e1f',
+  aiBadgeText: { fontSize: 11, color: '#c67ee2', fontWeight: '700' },
+  detailsCalRow: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 14 },
+  detailsCal: { fontSize: 36, fontWeight: '900', color: '#F3AF41' },
+  detailsCalUnit: { fontSize: 16, color: '#F3AF41', opacity: 0.7 },
+  nutrientsCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(76,175,80,0.1)', padding: 10,
+    borderRadius: 10, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(76,175,80,0.2)',
   },
-  photoDetailsHeader: {
-    paddingHorizontal: 25,
-    paddingVertical: 20,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+  nutrientsCardText: { fontSize: 13, color: '#81c784', flex: 1 },
+  detailsSectionLabel: { fontSize: 14, fontWeight: '700', color: '#c67ee2', marginBottom: 8 },
+  detailsBenefits: { fontSize: 15, color: '#CCCCCC', lineHeight: 22, marginBottom: 16 },
+  detailsMeta: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  detailsTime: { fontSize: 12, color: '#555' },
+  detailsBackBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 18, borderTopWidth: 1, borderTopColor: 'rgba(198,126,226,0.2)',
   },
-  photoDetailsImage: {
-    width: '100%',
-    height: 300,
-    resizeMode: 'cover',
-  },
-  photoDetailsContent: {
-    padding: 25,
-    flex: 1,
-  },
-  photoDetailsTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 15,
-  },
-  photoDetailsCaloriesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  photoDetailsCaloriesIcon: {
-    fontSize: 24,
-    color: '#F3AF41',
-    marginRight: 12,
-  },
-  photoDetailsCalories: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#F3AF41',
-  },
-  photoDetailsBenefitsLabel: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#c67ee2',
-    marginBottom: 10,
-  },
-  photoDetailsBenefitsScroll: {
-    maxHeight: 200,
-    marginBottom: 20,
-  },
-  photoDetailsBenefitsText: {
-    fontSize: 16,
-    color: '#CCCCCC',
-    lineHeight: 22,
-  },
-  photoDetailsTimestamp: {
-    fontSize: 14,
-    color: '#999999',
-    textAlign: 'center',
-  },
-  backToStorageBtn: {
-    backgroundColor: 'rgba(198, 126, 226, 0.2)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(198, 126, 226, 0.4)',
-    paddingVertical: 20,
-    alignItems: 'center',
-  },
-  backToStorageText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#c67ee2',
-  },
-
-  // Clear All Button
-  clearAllModalBtn: {
-    backgroundColor: 'rgba(255, 68, 68, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 68, 68, 0.4)',
-    paddingVertical: 16,
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  clearAllModalText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FF4444',
-  },
+  detailsBackText: { fontSize: 15, fontWeight: '600', color: '#c67ee2' },
 });
-
-
