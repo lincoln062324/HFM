@@ -4,7 +4,6 @@ import {
   ActivityIndicator, ScrollView, FlatList, Modal,
 } from 'react-native';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
-import * as FileSystem from 'expo-file-system/legacy';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import supabase from '../lib/supabase';
 
@@ -26,66 +25,24 @@ interface CameraScreenProps {
   onFoodAnalyzed?: (food: FoodEntry) => void;
 }
 
-// 🔑 Paste your Anthropic API key here
-const ANTHROPIC_API_KEY = 'sk-ant-PASTE_YOUR_KEY_HERE';
+// ─── Mock Food Analysis ──────────────────────────────────────────────────────
+const MOCK_FOODS = [
+  { foodName: 'Grilled Chicken Salad',  calories: 350, benefits: 'High protein, low carbs, rich in vitamins A and C, supports muscle growth and immune system.', nutrients: 'protein 38g, carbs 12g, fat 9g, fiber 4g' },
+  { foodName: 'Pasta Carbonara',         calories: 550, benefits: 'Good source of carbohydrates for energy, protein from eggs and cheese, satisfying and filling.', nutrients: 'protein 22g, carbs 68g, fat 18g, fiber 3g' },
+  { foodName: 'Vegetable Stir Fry',      calories: 220, benefits: 'Low calorie, high fiber, packed with antioxidants, promotes digestive health.', nutrients: 'protein 8g, carbs 30g, fat 7g, fiber 6g' },
+  { foodName: 'Grilled Salmon',          calories: 400, benefits: 'Excellent source of omega-3 fatty acids and high quality protein, supports heart and brain health.', nutrients: 'protein 42g, carbs 0g, fat 22g, fiber 0g' },
+  { foodName: 'Fruit Smoothie Bowl',     calories: 280, benefits: 'Rich in vitamins and antioxidants, natural sugars for quick energy, supports immune system.', nutrients: 'protein 6g, carbs 54g, fat 4g, fiber 7g' },
+  { foodName: 'Quinoa Buddha Bowl',      calories: 420, benefits: 'Complete protein source, high in fiber, contains iron and magnesium for energy metabolism.', nutrients: 'protein 18g, carbs 58g, fat 12g, fiber 9g' },
+  { foodName: 'Avocado Toast',           calories: 320, benefits: 'Healthy fats for heart health, fiber-rich, provides sustained energy and supports brain function.', nutrients: 'protein 10g, carbs 34g, fat 16g, fiber 8g' },
+  { foodName: 'Greek Yogurt Parfait',    calories: 250, benefits: 'Probiotics for gut health, high protein for satiety, calcium for strong bones.', nutrients: 'protein 18g, carbs 32g, fat 5g, fiber 2g' },
+  { foodName: 'Beef Tacos',              calories: 480, benefits: 'High in protein and iron, B vitamins support energy metabolism, satisfying and flavorful.', nutrients: 'protein 28g, carbs 40g, fat 18g, fiber 4g' },
+  { foodName: 'Veggie Omelette',         calories: 300, benefits: 'Rich in complete protein, vitamins from vegetables, supports muscle repair and eye health.', nutrients: 'protein 22g, carbs 8g, fat 18g, fiber 2g' },
+];
 
-// ─── Claude Vision Analysis ───────────────────────────────────────────────────
-const analyzeFoodWithClaude = async (
-  imageUri: string
-): Promise<{ foodName: string; calories: number; benefits: string; nutrients: string }> => {
-  const base64 = await FileSystem.readAsStringAsync(imageUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: { type: 'base64', media_type: 'image/jpeg', data: base64 },
-          },
-          {
-            type: 'text',
-            text: `You are a professional nutritionist. Analyze this food image and respond ONLY with a valid JSON object — no markdown, no backticks, no explanation:
-{
-  "foodName": "specific food name",
-  "calories": number (integer, realistic per serving),
-  "benefits": "2-3 sentences on health benefits",
-  "nutrients": "protein Xg, carbs Xg, fat Xg, fiber Xg"
-}
-If no food is visible use foodName "Unknown Food" and calories 0.`,
-          },
-        ],
-      }],
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Claude API error ${response.status}: ${err}`);
-  }
-
-  const data = await response.json();
-  const raw = data.content?.[0]?.text ?? '{}';
-  const clean = raw.replace(/```json|```/g, '').trim();
-  const parsed = JSON.parse(clean);
-
-  return {
-    foodName: parsed.foodName ?? 'Unknown Food',
-    calories: typeof parsed.calories === 'number' ? parsed.calories : 0,
-    benefits: parsed.benefits ?? '',
-    nutrients: parsed.nutrients ?? '',
-  };
+const mockAnalyzeFood = async (): Promise<{ foodName: string; calories: number; benefits: string; nutrients: string }> => {
+  // Simulate a short analysis delay
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  return MOCK_FOODS[Math.floor(Math.random() * MOCK_FOODS.length)];
 };
 
 // ─── Supabase row mapper ──────────────────────────────────────────────────────
@@ -159,27 +116,11 @@ export default function CameraScreen({ onClose, onFoodAnalyzed }: CameraScreenPr
       if (!photo?.uri) return;
       setLastPhoto(photo.uri);
 
-      // Upload image to Supabase Storage
-      const base64 = await FileSystem.readAsStringAsync(photo.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // Get user (nullable — guests allowed)
       const { data: { user } } = await supabase.auth.getUser();
       const userId = user?.id ?? null;
-      const fileName = `photo_${Date.now()}.jpg`;
-      const filePath = userId ? `${userId}/${fileName}` : `guest/${fileName}`;
-      const arrayBuffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-
-      let imageUrl = photo.uri;
-      const { error: uploadErr } = await supabase.storage
-        .from('food-images')
-        .upload(filePath, arrayBuffer, { contentType: 'image/jpeg', upsert: false });
-
-      if (!uploadErr) {
-        const { data: urlData } = supabase.storage.from('food-images').getPublicUrl(filePath);
-        imageUrl = urlData.publicUrl;
-      } else {
-        console.warn('Image upload skipped:', uploadErr.message);
-      }
+      // Use local URI as image_url (no storage upload needed for mock)
+      const imageUrl = photo.uri;
 
       // Insert pending row immediately — shows in Saved right away
       const { data: inserted, error: insertErr } = await supabase
@@ -218,7 +159,7 @@ export default function CameraScreen({ onClose, onFoodAnalyzed }: CameraScreenPr
   // ── STEP 2: Claude analysis → UPDATE the existing pending row ────────────
   const analyzeAndUpdate = async (localUri: string, rowId: string) => {
     try {
-      const result = await analyzeFoodWithClaude(localUri);
+      const result = await mockAnalyzeFood();
 
       const { data: updated, error: updateErr } = await supabase
         .from('food_analyses')
