@@ -570,59 +570,65 @@ supabase.auth.getSession().then(({ data: { session } }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-// Load notes from Supabase OR local (guest-first!)
-const loadNotesFromSupabase = useCallback(async (): Promise<StickyNote[]> => {
+// ── fetchSavedNotes: single source of truth for savedNotesSection ────────────
+// Hits Supabase directly for logged-in users; falls back to AsyncStorage for guests.
+const fetchSavedNotes = useCallback(async (): Promise<void> => {
+  setNotesLoading(true);
+  setNotesError(null);
   try {
-    setNotesLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
-    
     if (user) {
-      console.log('👤 Logged in - loading Supabase notes for', user.id);
       const { data, error } = await supabase
         .from('sticky_notes')
-        .select('*')
+        .select('id, title, content, items, created_at, updated_at')
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
-      
-      if (error) {
-        console.warn('⚠️ Supabase error (RLS?):', error.message);
-      } else if (data && data.length > 0) {
-        console.log('✅ Supabase notes loaded:', data.length);
-        const notes = (data || []).map((dbNote: any): StickyNote => ({
-          id: dbNote.id,
-          title: dbNote.title || 'Untitled Note',
-          content: dbNote.content || '',
-          items: dbNote.items || [],
-          createdAt: dbNote.created_at,
-          updatedAt: dbNote.updated_at,
-        }));
-        setNotesError(null);
-        setNotesLoading(false);
-        return notes;
-      }
+      if (error) throw error;
+      const notes: StickyNote[] = (data || []).map((row: any): StickyNote => ({
+        id: row.id,
+        title: row.title || 'Untitled Note',
+        content: row.content || '',
+        items: Array.isArray(row.items) ? row.items : [],
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+      setStickyNotes(notes);
+      console.log('✅ fetchSavedNotes: loaded', notes.length, 'from Supabase');
+    } else {
+      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      const local: StickyNote[] = raw ? JSON.parse(raw) : [];
+      setStickyNotes(local);
+      console.log('💾 fetchSavedNotes: loaded', local.length, 'from local (guest)');
     }
-    
-    // Guest mode or Supabase empty/fail → LOCAL FIRST
-    console.log('📱 Guest/local mode - loading AsyncStorage');
-    const storedNotes = await AsyncStorage.getItem(STORAGE_KEY);
-    const localNotes: StickyNote[] = storedNotes ? JSON.parse(storedNotes) : [];
-    console.log('💾 Local notes loaded:', localNotes.length);
-    setNotesError(null);
-    setNotesLoading(false);
-    return localNotes;
-    
-  } catch (error: any) {
-    console.error('💥 Load notes error:', error);
-    setNotesError(error.message || 'Failed to load notes');
-    setNotesLoading(false);
-    // Final fallback
+  } catch (err: any) {
+    console.error('💥 fetchSavedNotes error:', err);
+    setNotesError(err?.message || 'Failed to load notes');
     try {
-      const storedNotes = await AsyncStorage.getItem(STORAGE_KEY);
-      return storedNotes ? JSON.parse(storedNotes) : [];
-    } catch {
-      return [];
-    }
+      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      setStickyNotes(raw ? JSON.parse(raw) : []);
+    } catch { setStickyNotes([]); }
+  } finally {
+    setNotesLoading(false);
   }
+}, []);
+
+// Keep loadNotesFromSupabase as a thin wrapper for legacy callers (delete fallback etc.)
+const loadNotesFromSupabase = useCallback(async (): Promise<StickyNote[]> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data, error } = await supabase
+        .from('sticky_notes').select('*').eq('user_id', user.id)
+        .order('updated_at', { ascending: false });
+      if (!error && data) return data.map((row: any): StickyNote => ({
+        id: row.id, title: row.title || 'Untitled Note',
+        content: row.content || '', items: Array.isArray(row.items) ? row.items : [],
+        createdAt: row.created_at, updatedAt: row.updated_at,
+      }));
+    }
+    const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
 }, []);
 
 const saveNoteToSupabase = useCallback(async (note: StickyNote): Promise<void> => {
@@ -714,14 +720,39 @@ const deleteNoteFromSupabase = useCallback(async (noteId: string): Promise<void>
     }
   }, [loadNotesFromSupabase]);
 
-// Reload notes when user changes
+// Initial fetch + Realtime subscription — auto-updates savedNotesSection live
   useEffect(() => {
-    const reloadNotes = async () => {
-      const notes = await loadNotes();
-      setStickyNotes(notes);
+    // 1. Fetch immediately whenever auth state changes
+    fetchSavedNotes();
+
+    // 2. Subscribe to realtime changes on sticky_notes for this user
+    const userId = userSession?.user?.id;
+    if (!userId) return; // guests: no realtime needed, AsyncStorage is already synced
+
+    const channel = supabase
+      .channel(`sticky_notes:${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',            // INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'sticky_notes',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          console.log('🔴 Realtime event:', payload.eventType, (payload.new as any)?.title ?? (payload.old as any)?.id);
+          // Re-fetch the full ordered list so savedNotesSection is always in sync
+          fetchSavedNotes();
+        }
+      )
+      .subscribe((status) => {
+        console.log('📡 Realtime status:', status);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
     };
-    reloadNotes();
-  }, [userSession, loadNotes]);
+  }, [userSession, fetchSavedNotes]);
 
   // Handle sticky note modal visibility
   useEffect(() => {
@@ -819,9 +850,7 @@ const deleteNoteFromSupabase = useCallback(async (noteId: string): Promise<void>
   };
 
 const refreshSavedNotes = async () => {
-  const notes = await loadNotes();
-  setStickyNotes(notes);
-  console.log('🔄 Saved notes refreshed:', notes.length);
+  await fetchSavedNotes();
 };
 
 const handleSaveNote = async () => {
@@ -1695,17 +1724,7 @@ data={dynamicCalorieData}
                 <View style={styles.savedNotesHeader}>
                   {/* Debug render log - moved to useEffect */}
                 <Text style={styles.savedNotesTitle}>Saved Notes</Text>
-                  <Pressable onPress={async () => {
-                  console.log('🖱️ REFRESH TAP ✅');
-                  console.log('🔄 Manual refresh - userSession:', userSession?.user?.id);
-                  try {
-                    const notes = await loadNotes();
-                    console.log('📝 Loaded notes:', notes.length, notes.slice(0,2));
-                    setStickyNotes(notes);
-                  } catch (e) {
-                    console.error('💥 Load notes error:', e);
-                  }
-                }} style={[styles.refreshButton, {backgroundColor: 'rgba(198,126,226,0.3)', borderRadius: 20, padding: 6}]}>
+                  <Pressable onPress={fetchSavedNotes} style={[styles.refreshButton, {backgroundColor: 'rgba(198,126,226,0.3)', borderRadius: 20, padding: 6}]}>
                   <Icon name="refresh" size={18} color="#ffffff" />
                 </Pressable>
               </View>
@@ -1718,12 +1737,48 @@ data={dynamicCalorieData}
               
               {stickyNotes.length > 0 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {stickyNotes.slice(0, 5).map((note) => (
+                  {stickyNotes.slice(0, 10).map((note) => (
                     <Pressable key={note.id} style={styles.savedNoteCard} onPress={() => handleOpenNoteOverview(note)}>
+                      {/* Title */}
                       <Text style={styles.savedNoteTitle} numberOfLines={1}>{note.title}</Text>
-                      <Text style={styles.savedNoteContent} numberOfLines={2}>
-                        {note.content || (note.items?.length > 0 ? `${note.items.length} items` : 'No content')}
-                      </Text>
+
+                      {/* Text note preview */}
+                      {note.content ? (
+                        <Text style={styles.savedNoteContent} numberOfLines={3}>{note.content}</Text>
+                      ) : null}
+
+                      {/* List items preview — up to 3 items with checkboxes */}
+                      {!note.content && note.items?.length > 0 && (
+                        <View style={styles.savedNoteListPreview}>
+                          {note.items.slice(0, 3).map((item) => (
+                            <View key={item.id} style={styles.savedNoteListItem}>
+                              <Icon
+                                name={item.checked ? "check-square" : "square-o"}
+                                style={[styles.savedNoteCheckbox, item.checked && styles.savedNoteCheckboxChecked]}
+                              />
+                              <Text numberOfLines={1} style={[styles.savedNoteItemText, item.checked && styles.savedNoteItemTextChecked]}>
+                                {item.text}
+                              </Text>
+                            </View>
+                          ))}
+                          {note.items.length > 3 && (
+                            <Text style={styles.savedNoteMoreItems}>+{note.items.length - 3} more</Text>
+                          )}
+                        </View>
+                      )}
+
+                      {/* Type badge */}
+                      <View style={styles.savedNoteFooter}>
+                        <View style={[styles.savedNoteTypeBadge, note.items?.length > 0 && !note.content ? styles.savedNoteTypeBadgeList : styles.savedNoteTypeBadgeNote]}>
+                          <Icon
+                            name={note.items?.length > 0 && !note.content ? "list" : "file-text-o"}
+                            style={styles.savedNoteTypeIcon}
+                          />
+                          <Text style={styles.savedNoteTypeText}>
+                            {note.items?.length > 0 && !note.content ? `List (${note.items.length})` : 'Note'}
+                          </Text>
+                        </View>
+                      </View>
                     </Pressable>
                   ))}
                 </ScrollView>
@@ -3359,8 +3414,8 @@ const styles = StyleSheet.create({
   // Saved Notes Section Styles
   savedNotesSection: {
     position: "relative",
-    top: 358,
-    height: 150,
+    top: 353,
+    height: 170,
     backgroundColor: "#211c24",
     padding: 20,
     borderRadius: 25,
@@ -3372,24 +3427,85 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   savedNoteCard: {
-    backgroundColor: "#3b3a3a",
-    borderRadius: 10,
-    padding: 10,
-    marginRight: 10,
-    width: 120,
-    height: 70,
+    backgroundColor: "#2a2335",
+    borderRadius: 12,
+    padding: 12,
+    marginRight: 12,
+    width: 150,
+    height: 80,
     borderLeftWidth: 3,
     borderColor: "#c67ee2",
+    justifyContent: "space-between",
   },
   savedNoteTitle: {
-    fontSize: 16,
-    fontWeight: 600,
+    fontSize: 13,
+    fontWeight: "700",
     color: "#FFFFFF",
     marginBottom: 5,
   },
   savedNoteContent: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#CCCCCC",
+    lineHeight: 15,
+    flex: 1,
+  },
+  savedNoteListPreview: {
+    flex: 1,
+    gap: 3,
+  },
+  savedNoteListItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  savedNoteCheckbox: {
+    fontSize: 11,
+    color: "#888888",
+  },
+  savedNoteCheckboxChecked: {
+    color: "#4CAF50",
+  },
+  savedNoteItemText: {
+    fontSize: 11,
+    color: "#CCCCCC",
+    flex: 1,
+  },
+  savedNoteItemTextChecked: {
+    textDecorationLine: "line-through",
+    color: "#666666",
+  },
+  savedNoteMoreItems: {
+    fontSize: 10,
+    color: "#888888",
+    fontStyle: "italic",
+    marginTop: 1,
+  },
+  savedNoteFooter: {
+    marginTop: 5,
+  },
+  savedNoteTypeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  savedNoteTypeBadgeNote: {
+    backgroundColor: "rgba(198,126,226,0.25)",
+  },
+  savedNoteTypeBadgeList: {
+    backgroundColor: "rgba(76,175,80,0.25)",
+  },
+  savedNoteTypeIcon: {
+    fontSize: 9,
+    color: "#c67ee2",
+  },
+  savedNoteTypeText: {
+    fontSize: 9,
+    color: "#c67ee2",
+    fontWeight: "600",
   },
   // Note Overview Modal Styles
   noteOverviewModalContent: {
@@ -3499,4 +3615,3 @@ const styles = StyleSheet.create({
     height: 10,
   },
 });
-
