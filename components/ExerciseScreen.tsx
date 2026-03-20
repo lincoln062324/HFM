@@ -143,7 +143,7 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
     }
   };
 
-  const toggleFavorite = async (exerciseId: string, exerciseName: string) => {
+  const toggleFavorite = async (exerciseId: string, exerciseName: string, exerciseCategory: string) => {
     const isFav = userFavoritesIds.has(exerciseId);
 
     // 1. Instant UI + local persistence
@@ -179,9 +179,9 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
         // Insert into Supabase with exercise_name so the DB row is human-readable
         const { error } = await supabase
           .from('user_favorites_exercise')
-          .insert({ user_id: userId, exercise_id: exerciseId, exercise_name: exerciseName });
+          .insert({ user_id: userId, exercise_id: exerciseId, exercise_name: exerciseName, exercise_category: exerciseCategory });
         if (error) throw error;
-        console.log('Supabase: saved favorite', exerciseId, exerciseName, '| user:', userId ?? 'guest');
+        console.log('Supabase: saved favorite', exerciseId, exerciseName, exerciseCategory, '| user:', userId ?? 'guest');
       }
     } catch (e) {
       console.log('Supabase sync failed — local save still OK:', e);
@@ -301,7 +301,7 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
                     style={styles.favoriteButton}
                     onPress={(e) => {
                       e.stopPropagation();
-                      toggleFavorite(exercise.id, exercise.name);
+                      toggleFavorite(exercise.id, exercise.name, exercise.category);
                     }}
                   >
                     <Icon2 

@@ -15,6 +15,7 @@ CREATE TABLE user_favorites_exercise (
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   exercise_id TEXT NOT NULL,
   exercise_name TEXT,
+  exercise_category TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -27,11 +28,11 @@ CREATE POLICY "Public read" ON user_favorites_exercise FOR SELECT USING (true);
 CREATE POLICY "User manage" ON user_favorites_exercise FOR ALL USING (auth.uid() = user_id OR user_id IS NULL);
 
 -- 3. DEMO SEED - NULL user_id (works always)
-INSERT INTO user_favorites_exercise (user_id, exercise_id, exercise_name) VALUES
-  (NULL, 'pushups', 'Push-Ups'),
-  (NULL, 'squats', 'Squats'),
-  (NULL, 'plank', 'Plank'),
-  (NULL, 'running', 'Running')
+INSERT INTO user_favorites_exercise (user_id, exercise_id, exercise_name, exercise_category) VALUES
+  (NULL, 'pushups', 'Push-Ups', 'Strength'),
+  (NULL, 'squats', 'Squats', 'Strength'),
+  (NULL, 'plank', 'Plank', 'Core'),
+  (NULL, 'running', 'Running', 'Cardio')
 ON CONFLICT DO NOTHING;
 
 -- 4. Get real IDs + add yours
