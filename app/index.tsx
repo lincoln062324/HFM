@@ -1,5 +1,5 @@
 import { StyleSheet,Text, View } from "react-native";
-import Dashboard from "./dashboard";
+import Dashboard from "./AppEntry";
 
 export default function Index() {
   return (

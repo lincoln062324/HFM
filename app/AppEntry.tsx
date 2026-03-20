@@ -10,16 +10,22 @@ import Dashboard from '../components/dashboard';
 
 type AppState = 'loading' | 'auth' | 'onboarding' | 'app';
 
+interface PendingUser {
+  userId: string;
+  email: string;
+}
+
 export default function AppEntry() {
   const [appState, setAppState] = useState<AppState>('loading');
+  const [pendingUser, setPendingUser] = useState<PendingUser | null>(null);
 
   useEffect(() => {
     checkSession();
 
-    // Listen for auth changes (login / logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT' || !session) {
         setAppState('auth');
+        setPendingUser(null);
       }
     });
 
@@ -31,7 +37,6 @@ export default function AppEntry() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setAppState('auth'); return; }
 
-      // Check onboarding
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('onboarding_complete')
@@ -39,6 +44,7 @@ export default function AppEntry() {
         .single();
 
       if (!profile?.onboarding_complete) {
+        setPendingUser({ userId: session.user.id, email: session.user.email ?? '' });
         setAppState('onboarding');
       } else {
         setAppState('app');
@@ -48,11 +54,18 @@ export default function AppEntry() {
     }
   };
 
-  const handleAuthenticated = (isNewUser: boolean) => {
-    setAppState(isNewUser ? 'onboarding' : 'app');
+  // AuthScreen calls this with userId + email so OnboardingScreen never needs getSession()
+  const handleAuthenticated = (isNewUser: boolean, userId: string, email: string) => {
+    if (isNewUser) {
+      setPendingUser({ userId, email });
+      setAppState('onboarding');
+    } else {
+      setAppState('app');
+    }
   };
 
   const handleOnboardingComplete = () => {
+    setPendingUser(null);
     setAppState('app');
   };
 
@@ -69,7 +82,13 @@ export default function AppEntry() {
   }
 
   if (appState === 'onboarding') {
-    return <OnboardingScreen onComplete={handleOnboardingComplete} />;
+    return (
+      <OnboardingScreen
+        onComplete={handleOnboardingComplete}
+        userId={pendingUser?.userId ?? ''}
+        email={pendingUser?.email ?? ''}
+      />
+    );
   }
 
   return <Dashboard />;

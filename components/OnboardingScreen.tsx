@@ -10,6 +10,8 @@ import supabase from '../lib/supabase';
 
 interface OnboardingScreenProps {
   onComplete: () => void;
+  userId: string;
+  email: string;
 }
 
 // ─── Step data ────────────────────────────────────────────────────────────────
@@ -47,7 +49,7 @@ const STEPS = [
   { title: 'Daily Targets',      subtitle: 'Set your starting calorie goals',     key: 'targets' },
 ];
 
-export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) {
+export default function OnboardingScreen({ onComplete, userId, email }: OnboardingScreenProps) {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -108,15 +110,19 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
   // ── Save to Supabase ─────────────────────────────────────────────────────────
   const handleFinish = async () => {
     if (!validateStep()) return;
+    if (!userId) {
+      Alert.alert('Save Failed', 'User ID missing. Please go back and sign in again.');
+      return;
+    }
     setSaving(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-
-      // Save full onboarding data to user_profiles
+      // userId and email are passed directly as props from AppEntry —
+      // no session fetch needed, works immediately after registration
       const { error } = await supabase
         .from('user_profiles')
-        .update({
+        .upsert({
+          user_id: userId,
+          email: email,
           goals: selectedGoals,
           age: parseInt(age) || null,
           gender: gender || null,
@@ -130,8 +136,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           water_goal_l: parseFloat(waterGoalL) || 2,
           onboarding_complete: true,
           updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', user.id);
+        }, { onConflict: 'user_id' });
 
       if (error) throw error;
 
