@@ -84,12 +84,43 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
     fetchExercises();
   }, []);
 
-// Load persistent local favorites on mount
+// Load favorites on mount — Supabase first, then merge local
   useEffect(() => {
-    loadFavorites().then(favs => {
-      console.log('Loaded local favorites:', favs);
-      setUserFavoritesIds(new Set(favs));
-    });
+    async function loadAllFavorites() {
+      try {
+        // 1. Load local favorites immediately for instant UI
+        const localFavs = await loadFavorites();
+        const localSet = new Set<string>(localFavs);
+        setUserFavoritesIds(localSet);
+
+        // 2. Fetch from Supabase (works for both guests and logged-in users)
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id ?? null;
+
+        let query = supabase.from('user_favorites_exercise').select('exercise_id');
+        if (userId) {
+          query = query.eq('user_id', userId);
+        } else {
+          query = query.is('user_id', null);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          const dbIds = data.map((row: { exercise_id: string }) => row.exercise_id);
+          // Merge DB + local so nothing is lost
+          const merged = new Set<string>([...localSet, ...dbIds]);
+          setUserFavoritesIds(merged);
+          console.log('Favorites loaded from Supabase:', dbIds.length, 'entries');
+        } else {
+          console.log('No Supabase favorites found, using local only');
+        }
+      } catch (e) {
+        console.log('Supabase load failed, using local favorites:', e);
+      }
+    }
+    loadAllFavorites();
   }, []);
 
   const addCalories = (calories: number) => {
@@ -112,10 +143,10 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
     }
   };
 
-  const toggleFavorite = async (exerciseId: string) => {
+  const toggleFavorite = async (exerciseId: string, exerciseName: string) => {
     const isFav = userFavoritesIds.has(exerciseId);
-    
-    // Persistent local toggle + instant UI
+
+    // 1. Instant UI + local persistence
     const newFavorites = await toggleFavoriteLocal(exerciseId, userFavoritesIds);
     setUserFavoritesIds(newFavorites);
     
@@ -124,22 +155,36 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
     } else {
       Alert.alert("Added", `Added to favorites (${newFavorites.size})`);
     }
-    
-    // Optional DB sync
+
+    // 2. Sync to Supabase — works for both guests (user_id=NULL) and logged-in users
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.id) {
-        if (isFav) {
-          await supabase.from('user_favorites_exercise')
-            .delete().eq('user_id', session.user.id).eq('exercise_id', exerciseId);
+      const userId = session?.user?.id ?? null;
+
+      if (isFav) {
+        // Remove from Supabase
+        let deleteQuery = supabase
+          .from('user_favorites_exercise')
+          .delete()
+          .eq('exercise_id', exerciseId);
+        if (userId) {
+          deleteQuery = deleteQuery.eq('user_id', userId);
         } else {
-          await supabase.from('user_favorites_exercise')
-            .insert({ user_id: session.user.id, exercise_id: exerciseId });
+          deleteQuery = deleteQuery.is('user_id', null);
         }
-        console.log('DB synced');
+        const { error } = await deleteQuery;
+        if (error) throw error;
+        console.log('Supabase: removed favorite', exerciseId, exerciseName);
+      } else {
+        // Insert into Supabase with exercise_name so the DB row is human-readable
+        const { error } = await supabase
+          .from('user_favorites_exercise')
+          .insert({ user_id: userId, exercise_id: exerciseId, exercise_name: exerciseName });
+        if (error) throw error;
+        console.log('Supabase: saved favorite', exerciseId, exerciseName, '| user:', userId ?? 'guest');
       }
     } catch (e) {
-      console.log('DB sync failed - local OK');
+      console.log('Supabase sync failed — local save still OK:', e);
     }
   };
 
@@ -256,7 +301,7 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
                     style={styles.favoriteButton}
                     onPress={(e) => {
                       e.stopPropagation();
-                      toggleFavorite(exercise.id);
+                      toggleFavorite(exercise.id, exercise.name);
                     }}
                   >
                     <Icon2 
@@ -607,6 +652,3 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
-
-
-
