@@ -482,6 +482,7 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
   const [repeatOption, setRepeatOption] = useState('Daily');
   // Auth state
   const [userSession, setUserSession] = useState<Session | null>(null);
+  const [userProfileData, setUserProfileData] = useState<{ full_name: string; email: string } | null>(null);
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
   // Sticky Notes State
@@ -552,20 +553,33 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
 
 // Auth listener
   useEffect(() => {
-supabase.auth.getSession().then(({ data: { session } }) => {
+    const fetchUserProfile = async (userId: string) => {
+      try {
+        const { data } = await supabase
+          .from('user_profiles')
+          .select('full_name, email')
+          .eq('user_id', userId)
+          .single();
+        if (data) setUserProfileData({ full_name: data.full_name ?? '', email: data.email ?? '' });
+      } catch (e) {
+        console.log('Profile fetch error:', e);
+      }
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setUserSession(session);
+      if (session?.user?.id) fetchUserProfile(session.user.id);
       console.log('🔑 Initial session:', session?.user?.id || 'NO USER');
     });
-
-
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserSession(session);
+      if (session?.user?.id) fetchUserProfile(session.user.id);
+      else setUserProfileData(null);
       console.log('🔄 Auth change:', session?.user?.id || 'NO USER');
     });
-
 
     return () => subscription.unsubscribe();
   }, []);
@@ -1500,10 +1514,21 @@ const navigateToRecipes = () => {
           <Icon style={styles.close} name="times" />
         </Pressable>
         <View style={styles.userProfile}>
-          <Image style={styles.profileImage} source={require("../assets/images/g.jpg")} />
+          {/* Avatar with initials instead of static image */}
+          <View style={styles.profileAvatar}>
+            <Text style={styles.profileAvatarText}>
+              {userProfileData?.full_name
+                ? userProfileData.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+                : userSession?.user?.email?.[0]?.toUpperCase() ?? '?'}
+            </Text>
+          </View>
           <View style={styles.userInfo}>
-            <Text style={styles.userName}>John Doe</Text>
-            <Text style={styles.userEmail}>john.doe@example.com</Text>
+            <Text style={styles.userName}>
+              {userProfileData?.full_name || userSession?.user?.email?.split('@')[0] || 'User'}
+            </Text>
+            <Text style={styles.userEmail}>
+              {userProfileData?.email || userSession?.user?.email || ''}
+            </Text>
           </View>
         </View>
         <ScrollView style={styles.sidebarContent}>
@@ -2511,6 +2536,7 @@ const styles = StyleSheet.create({
     flex: 1,
     marginTop: 70,
     paddingTop: 20,
+    overflow: 'hidden',
   },
   sidebarItem: {
     paddingVertical: 15,
@@ -2544,6 +2570,23 @@ const styles = StyleSheet.create({
     left: 20,
     flexDirection: "row",
     alignItems: "center",
+  },
+  profileAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#c67ee2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+    borderWidth: 2,
+    borderColor: '#362c3a',
+  },
+  profileAvatarText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 1,
   },
   profileImage: {
     width: 50,
@@ -2643,7 +2686,7 @@ const styles = StyleSheet.create({
     fontWeight: 900,
   },
   caloriesC: {
-    top: -10,
+    top: -5,
     left: 20,
     fontFamily: "Roboto",
     color: "#FFFFFF",
@@ -3416,6 +3459,7 @@ const styles = StyleSheet.create({
     position: "relative",
     top: 353,
     height: 170,
+    width: 345,
     backgroundColor: "#211c24",
     padding: 20,
     borderRadius: 25,

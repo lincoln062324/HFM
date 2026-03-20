@@ -91,7 +91,6 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [otp, setOtp] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
-  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -130,7 +129,6 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const switchMode = (m: AuthMode) => {
     setMode(m); setStep('form'); setOtp('');
     setEmail(''); setPassword(''); setConfirmPassword(''); setFullName('');
-    setPendingUserId(null);
     resetAnim();
   };
 
@@ -152,10 +150,8 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   };
 
   // ── REGISTER ─────────────────────────────────────────────────────────────────
-  // 1. Validate form
-  // 2. signUp() — creates the account immediately (email confirm must be OFF)
-  // 3. Generate OTP → store in otp_codes table
-  // 4. Show OTP screen — user enters the code they receive by email (via Brevo SMTP)
+  // Only validates + stores OTP. Account is created AFTER code is confirmed.
+  // This avoids all session/confirmation race conditions completely.
   const handleRegister = async () => {
     if (!fullName.trim()) { shake(); return Alert.alert('Missing', 'Please enter your full name.'); }
     if (!email.trim()) { shake(); return Alert.alert('Missing', 'Please enter your email.'); }
@@ -165,46 +161,30 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     setLoading(true);
     try {
-      const cleanEmail = email.trim().toLowerCase();
-
-      // 1. Create account — email confirm must be OFF in Supabase Dashboard
-      //    (Authentication → Providers → Email → Confirm email: OFF)
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password,
-        options: { data: { full_name: fullName.trim() } },
-      });
-      if (signUpError) throw signUpError;
-
-      // 2. Save the user id so verifyOtp can use it without needing getUser()
-      const userId = signUpData.user?.id ?? null;
-      setPendingUserId(userId);
-
-      // 3. Generate OTP and store in otp_codes table
-      //    The code is emailed automatically via your Brevo SMTP configuration.
-      //    If Brevo is not set up yet, you can find the code in the otp_codes table.
-      await generateAndStoreOtp(cleanEmail);
-
+      // Just generate and store the OTP — no account created yet
+      await generateAndStoreOtp(email.trim().toLowerCase());
       setStep('otp');
       setResendCooldown(60);
       resetAnim();
     } catch (err: any) {
       shake();
-      Alert.alert('Registration Failed', err.message ?? 'Please try again.');
+      Alert.alert('Failed to send code', err.message ?? 'Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   // ── VERIFY OTP ────────────────────────────────────────────────────────────────
-  // Checks code against otp_codes table directly — no Supabase email API call.
+  // 1. Check code in otp_codes table
+  // 2. Code correct → signUp() to create account → signIn() to get session
+  // 3. Create user_profiles row → proceed to onboarding
   const handleVerifyOtp = async () => {
     if (otp.length < 6) return;
     setLoading(true);
     try {
       const cleanEmail = email.trim().toLowerCase();
 
-      // 1. Read the stored code from otp_codes
+      // 1. Read stored code
       const { data: stored, error: fetchError } = await supabase
         .from('otp_codes')
         .select('code, expires_at, used')
@@ -213,28 +193,22 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
       if (fetchError || !stored) {
         shake(); setOtp('');
-        Alert.alert('No Code Found', 'Please request a new code.');
+        Alert.alert('No Code Found', 'Please tap Resend to get a new code.');
         setLoading(false);
         return;
       }
-
-      // 2. Check expiry
       if (new Date(stored.expires_at) < new Date()) {
         shake(); setOtp('');
-        Alert.alert('Code Expired', 'This code has expired. Tap Resend for a new one.');
+        Alert.alert('Code Expired', 'Tap Resend to get a new code.');
         setLoading(false);
         return;
       }
-
-      // 3. Check already used
       if (stored.used) {
         shake(); setOtp('');
-        Alert.alert('Code Used', 'This code was already used. Tap Resend for a new one.');
+        Alert.alert('Code Already Used', 'Tap Resend to get a new code.');
         setLoading(false);
         return;
       }
-
-      // 4. Check match
       if (stored.code !== otp) {
         shake(); setOtp('');
         Alert.alert('Wrong Code', 'That code is incorrect. Please try again.');
@@ -242,29 +216,45 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         return;
       }
 
-      // 5. Mark as used
+      // 2. Mark code as used
       await supabase.from('otp_codes').update({ used: true }).eq('email', cleanEmail);
 
-      // 6. Sign in so we have a valid session for the profile upsert
+      // 3. Create the account now (after code confirmed)
+      //    emailRedirectTo: '' suppresses Supabase from sending any confirmation email
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: {
+          data: { full_name: fullName.trim() },
+          emailRedirectTo: '',   // prevents Supabase from sending a confirmation email
+        },
+      });
+      if (signUpError && !signUpError.message.includes('already registered')) {
+        throw signUpError;
+      }
+
+      // 4. Sign in to get a live session with a real user.id
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
+      if (signInError) throw signInError;
 
-      const userId = signInData?.user?.id ?? pendingUserId;
-      if (!userId) throw new Error('Could not identify user. Please try logging in.');
+      const userId = signInData.user.id;
+      const userEmail = signInData.user.email ?? cleanEmail;
 
-      // 7. Create user profile row
+      // 5. Create user profile row
       await supabase.from('user_profiles').upsert({
         user_id: userId,
-        email: cleanEmail,
+        email: userEmail,
         full_name: fullName.trim(),
         onboarding_complete: false,
         created_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });
 
-      setPendingUserId(null);
-      onAuthenticated(true, signInData?.user?.id ?? '', cleanEmail);
+      // 6. Go to onboarding — pass userId + email directly so no session re-fetch needed
+      onAuthenticated(true, userId, userEmail);
+
     } catch (err: any) {
       shake(); setOtp('');
       Alert.alert('Error', err.message ?? 'Something went wrong. Please try again.');
@@ -301,23 +291,18 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   };
 
   // ── RESEND ────────────────────────────────────────────────────────────────────
+  // Only regenerates and stores a new code in the otp_codes table.
+  // No Supabase email API called — zero rate limit impact.
   const handleResend = async () => {
     if (resendCooldown > 0) return;
     setLoading(true);
     try {
-      const cleanEmail = email.trim().toLowerCase();
-      const code = await generateAndStoreOtp(cleanEmail);
-
-      // Re-send via Supabase OTP (uses your custom SMTP)
-      await supabase.auth.signInWithOtp({
-        email: cleanEmail,
-        options: { shouldCreateUser: false, data: { otp_code: code } },
-      });
-
+      await generateAndStoreOtp(email.trim().toLowerCase());
       setOtp('');
       setResendCooldown(60);
+      Alert.alert('New code generated', 'Check your otp_codes table or email (if SMTP is configured).');
     } catch (err: any) {
-      Alert.alert('Error', err.message ?? 'Failed to resend code.');
+      Alert.alert('Error', err.message ?? 'Failed to regenerate code.');
     } finally {
       setLoading(false);
     }
