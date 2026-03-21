@@ -1,19 +1,17 @@
-// Reminders Screen Component - Revised with active/inactive tracking and consistency overview
-import { StyleSheet, Text, View, ScrollView, Pressable, Switch, Alert } from "react-native";
-import React, { useState, useEffect } from "react";
+// RemindersScreen.tsx — Live habits from Supabase, consistency tracker, daily schedule
+import {
+  StyleSheet, Text, View, ScrollView, Pressable,
+  Switch, Alert, ActivityIndicator,
+} from "react-native";
+import React, { useState, useEffect, useCallback } from "react";
 import Icon from "react-native-vector-icons/FontAwesome";
 import Icon2 from "react-native-vector-icons/AntDesign";
+import Icon5 from "react-native-vector-icons/FontAwesome5";
+import supabase from "../lib/supabase";
 
-interface RemindersScreenProps {
-  onClose: () => void;
-  onNavigateToAddHabit: () => void;
-  reminders?: HabitReminder[];
-  setReminders?: React.Dispatch<React.SetStateAction<HabitReminder[]>>;
-  addNewHabit?: () => void;
-}
-
+// ─── Types ────────────────────────────────────────────────────────────────────
 export interface HabitReminder {
-  id: number;
+  id: number | string;
   name: string;
   benefits: string;
   alarmTime: string;
@@ -26,963 +24,722 @@ export interface HabitReminder {
   totalUndone: number;
 }
 
-// Function type for adding a new habit
 export type AddHabitFunction = () => void;
 
-// Initial mock data with tracking fields
-const INITIAL_REMINDERS: HabitReminder[] = [
-  {
-    id: 1,
-    name: 'Eat more protein',
-    benefits: 'Builds muscle, supports metabolism, promotes satiety.',
-    alarmTime: '08:00 AM',
-    date: '2024-01-15',
-    repeat: 'Daily',
-    isActive: true,
-    isDone: false,
-    totalDone: 5,
-    totalUndone: 2,
-  },
-  {
-    id: 2,
-    name: 'Drink more water',
-    benefits: 'Hydrates the body, improves digestion, boosts energy.',
-    alarmTime: '09:00 AM',
-    date: '2024-01-15',
-    repeat: 'Daily',
-    isActive: true,
-    isDone: false,
-    totalDone: 7,
-    totalUndone: 1,
-  },
-  {
-    id: 3,
-    name: 'Eat more fruit',
-    benefits: 'Provides vitamins, antioxidants, supports immune health.',
-    alarmTime: '12:00 PM',
-    date: '2024-01-16',
-    repeat: 'Weekdays',
-    isActive: true,
-    isDone: false,
-    totalDone: 4,
-    totalUndone: 3,
-  },
-  {
-    id: 4,
-    name: 'Eat more vegetables',
-    benefits: 'Rich in fiber, vitamins, reduces disease risk.',
-    alarmTime: '01:00 PM',
-    date: '2024-01-16',
-    repeat: 'Daily',
-    isActive: true,
-    isDone: false,
-    totalDone: 6,
-    totalUndone: 2,
-  },
-  {
-    id: 5,
-    name: 'Log a daily meal',
-    benefits: 'Tracks nutrition, promotes mindful eating, aids weight management.',
-    alarmTime: '07:00 PM',
-    date: '2024-01-17',
-    repeat: 'Daily',
-    isActive: true,
-    isDone: false,
-    totalDone: 3,
-    totalUndone: 4,
-  },
-  {
-    id: 6,
-    name: 'Get more exercise',
-    benefits: 'Strengthens muscles, improves cardiovascular health, boosts mood.',
-    alarmTime: '06:00 AM',
-    date: '2024-01-17',
-    repeat: 'Weekdays',
-    isActive: false,
-    isDone: false,
-    totalDone: 2,
-    totalUndone: 5,
-  },
-  {
-    id: 7,
-    name: 'Reduce added sugar',
-    benefits: 'Lowers calorie intake, improves dental health, stabilizes energy.',
-    alarmTime: '10:00 AM',
-    date: '2024-01-18',
-    repeat: 'Daily',
-    isActive: true,
-    isDone: false,
-    totalDone: 8,
-    totalUndone: 0,
-  },
-];
+interface RemindersScreenProps {
+  onClose: () => void;
+  onNavigateToAddHabit: () => void;
+  reminders?: HabitReminder[];
+  setReminders?: React.Dispatch<React.SetStateAction<HabitReminder[]>>;
+  addNewHabit?: () => void;
+}
 
-export default function RemindersScreen({ 
-  onClose, 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const getConsistencyColor = (rate: number) => {
+  if (rate >= 80) return '#4CAF50';
+  if (rate >= 60) return '#FFA500';
+  return '#FF6B6B';
+};
+
+const getConsistencyLabel = (rate: number) => {
+  if (rate >= 80) return 'Excellent 🔥';
+  if (rate >= 60) return 'On Track 👍';
+  if (rate >= 40) return 'Needs Work 💪';
+  return 'Just Starting 🌱';
+};
+
+// Parse "08:00 AM" or "08:00" → minutes from midnight for sorting
+const timeToMinutes = (t: string): number => {
+  if (!t) return 999;
+  const upper = t.toUpperCase();
+  const isPM  = upper.includes('PM');
+  const isAM  = upper.includes('AM');
+  const clean = t.replace(/[^0-9:]/g, '').trim();
+  const [h, m] = clean.split(':').map(Number);
+  let hours = h || 0;
+  if (isPM && hours !== 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+  return hours * 60 + (m || 0);
+};
+
+// ─── ProgressBar ──────────────────────────────────────────────────────────────
+const MiniBar = ({ value, total, color }: { value: number; total: number; color: string }) => {
+  const pct = total > 0 ? Math.min(value / total, 1) : 0;
+  return (
+    <View style={barStyles.bg}>
+      <View style={[barStyles.fill, { width: `${pct * 100}%`, backgroundColor: color }]} />
+    </View>
+  );
+};
+const barStyles = StyleSheet.create({
+  bg:   { height: 6, backgroundColor: '#2a2335', borderRadius: 3, overflow: 'hidden', flex: 1 },
+  fill: { height: 6, borderRadius: 3 },
+});
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+export default function RemindersScreen({
+  onClose,
   onNavigateToAddHabit,
   addNewHabit,
   reminders: externalReminders,
-  setReminders: setExternalReminders
+  setReminders: setExternalReminders,
 }: RemindersScreenProps) {
-  // Use external reminders if provided, otherwise use local state
-  const [localReminders, setLocalReminders] = useState<HabitReminder[]>(INITIAL_REMINDERS);
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [localReminders, setLocalReminders] = useState<HabitReminder[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState<string | number | null>(null); // id being saved
 
-  // Use either external or local reminders
-  const reminders = externalReminders || localReminders;
-  const setReminders = setExternalReminders || setLocalReminders;
+  // Use external state if provided (from dashboard), else own state
+  const reminders    = externalReminders    ?? localReminders;
+  const setReminders = setExternalReminders ?? setLocalReminders;
 
-  // Calculate statistics
-  const activeReminders = reminders.filter(r => r.isActive);
+  // ── Fetch all reminders for the logged-in user ─────────────────────────────
+  const fetchReminders = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user?.id) { setLoading(false); return; }
+
+      const { data, error } = await supabase
+        .from('user_reminders')
+        .select('id, name, benefits, alarm_time, date, repeat, is_active, total_done, total_undone')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      if (!data || data.length === 0) { setLoading(false); return; }
+
+      const mapped: HabitReminder[] = data.map((r: any) => ({
+        id:           r.id,
+        name:         r.name        ?? 'Habit',
+        benefits:     r.benefits    ?? '',
+        alarmTime:    r.alarm_time  ?? '08:00 AM',
+        date:         r.date        ?? new Date().toISOString().split('T')[0],
+        repeat:       r.repeat      ?? 'Daily',
+        isActive:     r.is_active   ?? true,
+        isDone:       false,
+        totalDone:    r.total_done  ?? 0,
+        totalUndone:  r.total_undone ?? 0,
+      }));
+      setReminders(mapped);
+    } catch (e: any) {
+      console.warn('fetchReminders:', e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Only fetch from Supabase if no external reminders were passed
+    if (!externalReminders || externalReminders.length === 0) {
+      fetchReminders();
+    } else {
+      setLoading(false);
+    }
+  }, []);
+
+  // ── Toggle active/inactive + persist ──────────────────────────────────────
+  const toggleActive = async (id: number | string) => {
+    const reminder = reminders.find(r => r.id === id);
+    if (!reminder) return;
+    const newVal = !reminder.isActive;
+
+    // Optimistic update
+    setReminders(prev => prev.map(r => r.id === id ? { ...r, isActive: newVal } : r));
+    setSaving(id);
+    try {
+      await supabase
+        .from('user_reminders')
+        .update({ is_active: newVal })
+        .eq('id', id);
+    } catch (e: any) {
+      // Rollback
+      setReminders(prev => prev.map(r => r.id === id ? { ...r, isActive: !newVal } : r));
+      Alert.alert('Error', 'Failed to update reminder.');
+    } finally { setSaving(null); }
+  };
+
+  // ── Mark done + persist ────────────────────────────────────────────────────
+  const markDone = async (id: number | string) => {
+    const reminder = reminders.find(r => r.id === id);
+    if (!reminder || reminder.isDone) return;
+    const newDone = reminder.totalDone + 1;
+
+    setReminders(prev => prev.map(r =>
+      r.id === id ? { ...r, isDone: true, totalDone: newDone, lastCompleted: new Date().toISOString() } : r
+    ));
+    setSaving(id);
+    try {
+      await supabase
+        .from('user_reminders')
+        .update({ total_done: newDone })
+        .eq('id', id);
+      Alert.alert('✅ Habit Done!', `"${reminder.name}" marked as complete. Keep it up!`);
+    } catch (e: any) {
+      setReminders(prev => prev.map(r =>
+        r.id === id ? { ...r, isDone: false, totalDone: reminder.totalDone } : r
+      ));
+      Alert.alert('Error', 'Failed to save progress.');
+    } finally { setSaving(null); }
+  };
+
+  // ── Undo done ──────────────────────────────────────────────────────────────
+  const undoDone = async (id: number | string) => {
+    const reminder = reminders.find(r => r.id === id);
+    if (!reminder || !reminder.isDone) return;
+    const newDone = Math.max(reminder.totalDone - 1, 0);
+
+    setReminders(prev => prev.map(r =>
+      r.id === id ? { ...r, isDone: false, totalDone: newDone } : r
+    ));
+    setSaving(id);
+    try {
+      await supabase.from('user_reminders').update({ total_done: newDone }).eq('id', id);
+    } catch (e: any) {
+      setReminders(prev => prev.map(r =>
+        r.id === id ? { ...r, isDone: true, totalDone: reminder.totalDone } : r
+      ));
+    } finally { setSaving(null); }
+  };
+
+  // ── End of day — mark all pending active reminders as missed ───────────────
+  const endOfDay = async () => {
+    Alert.alert(
+      'End of Day Check',
+      'Mark all uncompleted habits as missed for today?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            const today = new Date().toISOString().split('T')[0];
+            const toMiss = reminders.filter(r =>
+              r.isActive && !r.isDone &&
+              (r.date === today || r.repeat === 'Daily' || r.repeat === 'Weekdays')
+            );
+            if (toMiss.length === 0) {
+              Alert.alert('All done!', 'No pending habits to mark.');
+              return;
+            }
+            // Optimistic
+            setReminders(prev => prev.map(r =>
+              toMiss.find(m => m.id === r.id)
+                ? { ...r, totalUndone: r.totalUndone + 1 }
+                : r
+            ));
+            // Persist each — wrap in async so Promise.all can handle errors
+            await Promise.all(toMiss.map(async r => {
+              try {
+                await supabase
+                  .from('user_reminders')
+                  .update({ total_undone: r.totalUndone + 1 })
+                  .eq('id', r.id);
+              } catch (_) {}
+            }));
+            Alert.alert('Done', `${toMiss.length} habit${toMiss.length > 1 ? 's' : ''} marked as missed.`);
+          },
+        },
+      ]
+    );
+  };
+
+  // ─── Derived data ──────────────────────────────────────────────────────────
+  const activeReminders   = reminders.filter(r => r.isActive);
   const inactiveReminders = reminders.filter(r => !r.isActive);
-  const todayReminders = reminders.filter(r => {
-    const today = new Date().toISOString().split('T')[0];
-    return r.date === today || r.repeat === 'Daily';
-  });
-  
-  // Calculate total done and undone across all reminders
-  const totalDone = reminders.reduce((sum, r) => sum + r.totalDone, 0);
-  const totalUndone = reminders.reduce((sum, r) => sum + r.totalUndone, 0);
-  const consistencyRate = totalDone + totalUndone > 0 
-    ? Math.round((totalDone / (totalDone + totalUndone)) * 100) 
-    : 0;
+  const totalDone   = reminders.reduce((s, r) => s + r.totalDone, 0);
+  const totalUndone = reminders.reduce((s, r) => s + r.totalUndone, 0);
+  const overallRate = totalDone + totalUndone > 0
+    ? Math.round((totalDone / (totalDone + totalUndone)) * 100) : 0;
 
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
+  // Daily schedule — only active, sorted by time
+  const today = new Date().toISOString().split('T')[0];
+  const todaySchedule = activeReminders
+    .filter(r => r.repeat === 'Daily' || r.date === today ||
+      (r.repeat === 'Weekdays' && new Date().getDay() >= 1 && new Date().getDay() <= 5))
+    .sort((a, b) => timeToMinutes(a.alarmTime) - timeToMinutes(b.alarmTime));
+
+  const todayDone    = todaySchedule.filter(r => r.isDone).length;
+  const todayPending = todaySchedule.filter(r => !r.isDone).length;
+
+  const formatDate = (d: string) => {
+    try {
+      return new Date(d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    } catch { return d; }
   };
 
-  // Toggle reminder active/inactive status
-  const toggleReminderActive = (id: number) => {
-    setReminders(prev => prev.map(reminder => 
-      reminder.id === id 
-        ? { ...reminder, isActive: !reminder.isActive }
-        : reminder
-    ));
-  };
-
-  // Mark reminder as done (user dismissed alarm)
-  const markAsDone = (id: number) => {
-    setReminders(prev => prev.map(reminder => 
-      reminder.id === id 
-        ? { 
-            ...reminder, 
-            isDone: true, 
-            lastCompleted: new Date().toISOString(),
-            totalDone: reminder.totalDone + 1
-          }
-        : reminder
-    ));
-    Alert.alert('Habit Completed', 'Great job! This habit has been marked as done.');
-  };
-
-  // Mark reminder as undone (user didn't dismiss alarm - auto called at end of day)
-  const markAsUndone = (id: number) => {
-    setReminders(prev => prev.map(reminder => 
-      reminder.id === id 
-        ? { 
-            ...reminder, 
-            isDone: false,
-            totalUndone: reminder.totalUndone + 1
-          }
-        : reminder
-    ));
-  };
-
-  // Mark all pending reminders as undone (for end of day automation)
-  const markAllPendingAsUndone = () => {
-    const today = new Date().toISOString().split('T')[0];
-    setReminders(prev => prev.map(reminder => 
-      reminder.isActive && !reminder.isDone && (reminder.date === today || reminder.repeat === 'Daily')
-        ? { 
-            ...reminder, 
-            isDone: false,
-            totalUndone: reminder.totalUndone + 1
-          }
-        : reminder
-    ));
-    Alert.alert('End of Day', 'All pending reminders have been marked as undone.');
-  };
-
-  // Reset all today's reminders for new day
-  const resetTodayReminders = () => {
-    setReminders(prev => prev.map(reminder => 
-      ({ ...reminder, isDone: false })
-    ));
-  };
-
-  // Get consistency color
-  const getConsistencyColor = (rate: number) => {
-    if (rate >= 80) return '#4CAF50'; // Green
-    if (rate >= 60) return '#FFA500'; // Orange
-    return '#FF6B6B'; // Red
-  };
-
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <View style={styles.header1} />
       <View style={styles.header}>
         <Text style={styles.title}>Reminders</Text>
         <Pressable onPress={onClose}>
-          <Icon style={styles.closeIcon} name="times-circle" />
+          <Icon name="times-circle" style={styles.closeIcon} />
         </Pressable>
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Summary Stats */}
-        <View style={styles.summaryContainer}>
-          <View style={styles.summaryItem}>
-            <Icon style={styles.summaryIcon} name="bell" />
-            <Text style={styles.summaryValue}>{activeReminders.length}</Text>
-            <Text style={styles.summaryLabel}>Active</Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Icon style={styles.summaryIcon} name="bell-slash" />
-            <Text style={styles.summaryValue}>{inactiveReminders.length}</Text>
-            <Text style={styles.summaryLabel}>Inactive</Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Icon style={styles.summaryIcon} name="calendar" />
-            <Text style={styles.summaryValue}>{reminders.length}</Text>
-            <Text style={styles.summaryLabel}>Total</Text>
-          </View>
+      {loading ? (
+        <View style={styles.loadingBox}>
+          <ActivityIndicator size="large" color="#c67ee2" />
+          <Text style={styles.loadingText}>Loading your habits…</Text>
         </View>
+      ) : (
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
 
-        {/* Consistency Overview */}
-        <View style={styles.consistencySection}>
-          <Text style={styles.sectionTitle}>Your Consistency Overview</Text>
-          <View style={styles.consistencyCard}>
-            <View style={styles.consistencyHeader}>
-              <Text style={styles.consistencyTitle}>Overall Progress</Text>
-              <Text style={[styles.consistencyRate, { color: getConsistencyColor(consistencyRate) }]}>
-                {consistencyRate}%
-              </Text>
+          {/* ── Summary Stats ─────────────────────────────────────────────── */}
+          <View style={styles.summaryRow}>
+            <View style={[styles.summaryCard, { borderColor: '#4CAF50' }]}>
+              <Icon name="bell" style={[styles.summaryIcon, { color: '#4CAF50' }]} />
+              <Text style={styles.summaryValue}>{activeReminders.length}</Text>
+              <Text style={styles.summaryLabel}>Active</Text>
             </View>
-            <View style={styles.progressBarContainer}>
-              <View style={[styles.progressBar, { width: `${consistencyRate}%`, backgroundColor: getConsistencyColor(consistencyRate) }]} />
+            <View style={[styles.summaryCard, { borderColor: '#666' }]}>
+              <Icon name="bell-slash" style={[styles.summaryIcon, { color: '#666' }]} />
+              <Text style={styles.summaryValue}>{inactiveReminders.length}</Text>
+              <Text style={styles.summaryLabel}>Inactive</Text>
             </View>
-            <View style={styles.statsRow}>
-              <View style={styles.statItem}>
-                <Icon style={styles.checkIcon} name="check-circle" />
-                <Text style={styles.statValue}>{totalDone}</Text>
-                <Text style={styles.statLabel}>Total Done</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statItem}>
-                <Icon style={styles.uncheckIcon} name="times-circle" />
-                <Text style={styles.statValue}>{totalUndone}</Text>
-                <Text style={styles.statLabel}>Total Undone</Text>
-              </View>
+            <View style={[styles.summaryCard, { borderColor: '#c67ee2' }]}>
+              <Icon5 name="calendar-check" style={[styles.summaryIcon, { color: '#c67ee2' }]} />
+              <Text style={styles.summaryValue}>{todaySchedule.length}</Text>
+              <Text style={styles.summaryLabel}>Today</Text>
             </View>
-            <Text style={styles.consistencyNote}>
-              Track your habits to see your consistency improve!
-            </Text>
+            <View style={[styles.summaryCard, { borderColor: '#F3AF41' }]}>
+              <Icon name="list" style={[styles.summaryIcon, { color: '#F3AF41' }]} />
+              <Text style={styles.summaryValue}>{reminders.length}</Text>
+              <Text style={styles.summaryLabel}>Total</Text>
+            </View>
           </View>
-        </View>
 
-        {/* Quick Actions */}
-        <View style={styles.actionsSection}>
-<Pressable style={styles.addHabitButton} onPress={() => {
-            if (onNavigateToAddHabit) onNavigateToAddHabit();
-            if (addNewHabit) addNewHabit();
-          }}>
-            <Icon style={styles.addIcon} name="plus-circle" />
-            <Text style={styles.addHabitText}>Add New Habit</Text>
-          </Pressable>
-          <Pressable style={styles.endDayButton} onPress={markAllPendingAsUndone}>
-            <Icon2 style={styles.endDayIcon} name="moon" />
-            <Text style={styles.endDayText}>End of Day Check</Text>
-          </Pressable>
-        </View>
+          {/* ── Consistency Progress Tracker ──────────────────────────────── */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>📊 Consistency Tracker</Text>
 
-        {/* Active Reminders */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Active Reminders</Text>
-          {activeReminders.map((reminder) => (
-            <View key={reminder.id} style={[styles.reminderCard, reminder.isDone && styles.reminderCardDone]}>
-              <View style={styles.reminderHeader}>
-                <View style={styles.reminderLeft}>
-                  <Icon style={styles.reminderIcon} name={reminder.isDone ? "check-circle" : "bell"} />
-                  <View style={styles.reminderInfo}>
-                    <Text style={styles.reminderName}>{reminder.name}</Text>
-                    <Text style={styles.reminderBenefits}>{reminder.benefits}</Text>
+            {reminders.length === 0 ? (
+              <Text style={styles.emptyHint}>Create habits to start tracking your consistency.</Text>
+            ) : (
+              <>
+                {/* Overall rate */}
+                <View style={styles.rateRow}>
+                  <View>
+                    <Text style={styles.rateLabel}>Overall Completion Rate</Text>
+                    <Text style={styles.rateSubLabel}>{getConsistencyLabel(overallRate)}</Text>
+                  </View>
+                  <Text style={[styles.ratePct, { color: getConsistencyColor(overallRate) }]}>
+                    {overallRate}%
+                  </Text>
+                </View>
+                <View style={styles.bigBarBg}>
+                  <View style={[styles.bigBarFill, {
+                    width: `${overallRate}%`,
+                    backgroundColor: getConsistencyColor(overallRate),
+                  }]} />
+                </View>
+
+                {/* Done / Missed stats */}
+                <View style={styles.statsRow}>
+                  <View style={styles.statBox}>
+                    <Icon name="check-circle" style={styles.statIconGreen} />
+                    <Text style={styles.statNum}>{totalDone}</Text>
+                    <Text style={styles.statLbl}>Total Done</Text>
+                  </View>
+                  <View style={styles.statDivider} />
+                  <View style={styles.statBox}>
+                    <Icon name="times-circle" style={styles.statIconRed} />
+                    <Text style={styles.statNum}>{totalUndone}</Text>
+                    <Text style={styles.statLbl}>Total Missed</Text>
+                  </View>
+                  <View style={styles.statDivider} />
+                  <View style={styles.statBox}>
+                    <Icon name="circle-o" style={styles.statIconGrey} />
+                    <Text style={styles.statNum}>{todayPending}</Text>
+                    <Text style={styles.statLbl}>Today Pending</Text>
                   </View>
                 </View>
-                <View style={[styles.statusBadge, reminder.isActive && styles.statusBadgeActive]}>
-                  <Text style={[styles.statusText, reminder.isActive && styles.statusTextActive]}>
-                    {reminder.isActive ? 'Active' : 'Inactive'}
-                  </Text>
-                </View>
-              </View>
-              
-              <View style={styles.reminderDetails}>
-                <View style={styles.detailRow}>
-                  <Icon2 style={styles.detailIcon} name="clock-circle" />
-                  <Text style={styles.detailLabel}>Alarm:</Text>
-                  <Text style={styles.detailValue}>{reminder.alarmTime}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Icon style={styles.detailIcon} name="calendar" />
-                  <Text style={styles.detailLabel}>Date:</Text>
-                  <Text style={styles.detailValue}>{formatDate(reminder.date)}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Icon2 style={styles.detailIcon} name="redo" />
-                  <Text style={styles.detailLabel}>Repeat:</Text>
-                  <Text style={styles.detailValue}>{reminder.repeat}</Text>
-                </View>
-              </View>
 
-              {/* Progress Stats */}
-              <View style={styles.progressStats}>
-                <View style={styles.progressStat}>
-                  <Icon style={styles.checkSmall} name="check" />
-                  <Text style={styles.progressStatValue}>{reminder.totalDone}</Text>
-                  <Text style={styles.progressStatLabel}>Done</Text>
-                </View>
-                <View style={styles.progressStat}>
-                  <Icon style={styles.uncheckSmall} name="times" />
-                  <Text style={styles.progressStatValue}>{reminder.totalUndone}</Text>
-                  <Text style={styles.progressStatLabel}>Missed</Text>
-                </View>
-              </View>
-
-              {/* Action Buttons */}
-              <View style={styles.actionButtons}>
-                {!reminder.isDone ? (
-                  <Pressable 
-                    style={[styles.actionButton, styles.doneButton]} 
-                    onPress={() => markAsDone(reminder.id)}
-                  >
-                    <Icon style={styles.actionIcon} name="check" />
-                    <Text style={styles.actionButtonText}>Mark Done</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable 
-                    style={[styles.actionButton, styles.undoneButton]} 
-                    onPress={() => markAsUndone(reminder.id)}
-                  >
-                    <Icon style={styles.actionIcon} name="undo" />
-                    <Text style={styles.actionButtonText}>Undo</Text>
-                  </Pressable>
+                {/* Per-habit mini tracker */}
+                {reminders.length > 0 && (
+                  <View style={styles.habitBarsBox}>
+                    <Text style={styles.habitBarsTitle}>Per Habit Progress</Text>
+                    {reminders.map(r => {
+                      const total = r.totalDone + r.totalUndone;
+                      const pct = total > 0 ? Math.round((r.totalDone / total) * 100) : 0;
+                      const col = getConsistencyColor(pct);
+                      return (
+                        <View key={r.id} style={styles.habitBarRow}>
+                          <View style={styles.habitBarLeft}>
+                            <View style={[styles.habitDot, { backgroundColor: r.isActive ? '#4CAF50' : '#555' }]} />
+                            <Text style={styles.habitBarName} numberOfLines={1}>{r.name}</Text>
+                          </View>
+                          <MiniBar value={r.totalDone} total={total || 1} color={col} />
+                          <Text style={[styles.habitBarPct, { color: col }]}>{pct}%</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
                 )}
-                <Pressable 
-                  style={[styles.actionButton, styles.toggleButton]}
-                  onPress={() => toggleReminderActive(reminder.id)}
-                >
-                  <Icon style={styles.actionIcon} name={reminder.isActive ? "bell-slash" : "bell"} />
-                  <Text style={styles.actionButtonText}>
-                    {reminder.isActive ? 'Turn Off' : 'Turn On'}
-                  </Text>
-                </Pressable>
+              </>
+            )}
+          </View>
+
+          {/* ── Quick Actions ──────────────────────────────────────────────── */}
+          <View style={styles.actionsRow}>
+            <Pressable style={styles.addBtn} onPress={() => {
+              if (onNavigateToAddHabit) onNavigateToAddHabit();
+              if (addNewHabit) addNewHabit();
+            }}>
+              <Icon name="plus-circle" style={styles.addBtnIcon} />
+              <Text style={styles.addBtnText}>Add New Habit</Text>
+            </Pressable>
+            <Pressable style={styles.endDayBtn} onPress={endOfDay}>
+              <Icon2 name="moon" style={styles.endDayBtnIcon} />
+              <Text style={styles.endDayBtnText}>End of Day</Text>
+            </Pressable>
+          </View>
+
+          {/* ── Today's Daily Schedule ─────────────────────────────────────── */}
+          <View style={styles.section}>
+            <View style={styles.secRow}>
+              <Text style={styles.sectionTitle}>🗓 Today's Schedule</Text>
+              <View style={styles.todayBadge}>
+                <Text style={styles.todayBadgeText}>{todayDone}/{todaySchedule.length} done</Text>
               </View>
             </View>
-          ))}
-        </View>
 
-        {/* Inactive Reminders */}
-        {inactiveReminders.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Inactive Reminders</Text>
-            {inactiveReminders.map((reminder) => (
-              <View key={reminder.id} style={[styles.reminderCard, styles.reminderCardInactive]}>
-                <View style={styles.reminderHeader}>
-                  <View style={styles.reminderLeft}>
-                    <Icon style={[styles.reminderIcon, styles.reminderIconInactive]} name="bell-slash" />
-                    <View style={styles.reminderInfo}>
-                      <Text style={[styles.reminderName, styles.reminderNameInactive]}>{reminder.name}</Text>
-                      <Text style={[styles.reminderBenefits, styles.reminderBenefitsInactive]}>{reminder.benefits}</Text>
+            {todaySchedule.length === 0 ? (
+              <Text style={styles.emptyHint}>No habits scheduled for today. Add one!</Text>
+            ) : (
+              <View style={styles.timeline}>
+                {todaySchedule.map((r, i) => (
+                  <View key={r.id} style={styles.timelineItem}>
+                    {/* Time column */}
+                    <View style={styles.timeCol}>
+                      <Text style={[styles.timeText, r.isDone && { color: '#4CAF50' }]}>
+                        {r.alarmTime}
+                      </Text>
+                    </View>
+
+                    {/* Line + dot */}
+                    <View style={styles.timelineTrack}>
+                      <Pressable onPress={() => r.isDone ? undoDone(r.id) : markDone(r.id)}>
+                        <View style={[
+                          styles.timelineDot,
+                          { backgroundColor: r.isDone ? '#4CAF50' : r.isActive ? '#c67ee2' : '#555' }
+                        ]}>
+                          {r.isDone
+                            ? <Icon name="check" size={10} color="#fff" />
+                            : <Icon name="bell" size={9} color="#fff" />
+                          }
+                        </View>
+                      </Pressable>
+                      {i < todaySchedule.length - 1 && <View style={styles.timelineLine} />}
+                    </View>
+
+                    {/* Content */}
+                    <View style={styles.timelineContent}>
+                      <Text style={[styles.tlName, r.isDone && styles.tlNameDone]} numberOfLines={1}>
+                        {r.name}
+                      </Text>
+                      <Text style={styles.tlRepeat}>{r.repeat}</Text>
+                    </View>
+
+                    {/* Status */}
+                    <View style={[styles.tlStatus, {
+                      backgroundColor: r.isDone ? 'rgba(76,175,80,0.15)' : 'rgba(198,126,226,0.1)'
+                    }]}>
+                      <Text style={[styles.tlStatusText, { color: r.isDone ? '#4CAF50' : '#c67ee2' }]}>
+                        {r.isDone ? 'Done' : 'Pending'}
+                      </Text>
                     </View>
                   </View>
-                  <View style={[styles.statusBadge, styles.statusBadgeInactive]}>
-                    <Text style={[styles.statusText, styles.statusTextInactive]}>Inactive</Text>
-                  </View>
-                </View>
-                
-                <View style={styles.reminderDetails}>
-                  <View style={styles.detailRow}>
-                    <Icon2 style={[styles.detailIcon, styles.detailIconInactive]} name="clock-circle" />
-                    <Text style={[styles.detailLabel, styles.detailLabelInactive]}>Alarm:</Text>
-                    <Text style={[styles.detailValue, styles.detailValueInactive]}>{reminder.alarmTime}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Icon style={[styles.detailIcon, styles.detailIconInactive]} name="calendar" />
-                    <Text style={[styles.detailLabel, styles.detailLabelInactive]}>Date:</Text>
-                    <Text style={[styles.detailValue, styles.detailValueInactive]}>{formatDate(reminder.date)}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Icon2 style={[styles.detailIcon, styles.detailIconInactive]} name="redo" />
-                    <Text style={[styles.detailLabel, styles.detailLabelInactive]}>Repeat:</Text>
-                    <Text style={[styles.detailValue, styles.detailValueInactive]}>{reminder.repeat}</Text>
-                  </View>
-                </View>
+                ))}
+              </View>
+            )}
+          </View>
 
-                {/* Progress Stats */}
-                <View style={styles.progressStats}>
-                  <View style={styles.progressStat}>
-                    <Icon style={[styles.checkSmall, styles.inactiveIcon]} name="check" />
-                    <Text style={[styles.progressStatValue, styles.inactiveText]}>{reminder.totalDone}</Text>
-                    <Text style={[styles.progressStatLabel, styles.inactiveText]}>Done</Text>
+          {/* ── Active Reminders ──────────────────────────────────────────── */}
+          <View style={styles.section}>
+            <View style={styles.secRow}>
+              <Text style={styles.sectionTitle}>🔔 Active Reminders</Text>
+              <View style={[styles.countBadge, { backgroundColor: 'rgba(76,175,80,0.2)' }]}>
+                <Text style={[styles.countBadgeText, { color: '#4CAF50' }]}>{activeReminders.length}</Text>
+              </View>
+            </View>
+
+            {activeReminders.length === 0 ? (
+              <Text style={styles.emptyHint}>No active reminders. Tap "Add New Habit" to create one.</Text>
+            ) : (
+              activeReminders.map(r => (
+                <View key={r.id} style={[styles.reminderCard, r.isDone && styles.reminderCardDone]}>
+                  <View style={styles.cardHeader}>
+                    <Icon
+                      name={r.isDone ? 'check-circle' : 'bell'}
+                      style={[styles.cardIcon, { color: r.isDone ? '#4CAF50' : '#c67ee2' }]}
+                    />
+                    <View style={styles.cardInfo}>
+                      <Text style={styles.cardName}>{r.name}</Text>
+                      <Text style={styles.cardBenefits} numberOfLines={2}>{r.benefits}</Text>
+                    </View>
+                    <Switch
+                      value={r.isActive}
+                      onValueChange={() => toggleActive(r.id)}
+                      trackColor={{ false: '#362c3a', true: 'rgba(198,126,226,0.4)' }}
+                      thumbColor={r.isActive ? '#c67ee2' : '#666'}
+                      disabled={saving === r.id}
+                    />
                   </View>
-                  <View style={styles.progressStat}>
-                    <Icon style={[styles.uncheckSmall, styles.inactiveIcon]} name="times" />
-                    <Text style={[styles.progressStatValue, styles.inactiveText]}>{reminder.totalUndone}</Text>
-                    <Text style={[styles.progressStatLabel, styles.inactiveText]}>Missed</Text>
+
+                  <View style={styles.cardDetails}>
+                    <View style={styles.detailPill}>
+                      <Icon2 name="clock-circle" style={styles.pillIcon} />
+                      <Text style={styles.pillText}>{r.alarmTime}</Text>
+                    </View>
+                    <View style={styles.detailPill}>
+                      <Icon2 name="redo" style={styles.pillIcon} />
+                      <Text style={styles.pillText}>{r.repeat}</Text>
+                    </View>
+                    <View style={styles.detailPill}>
+                      <Icon name="calendar" style={styles.pillIcon} />
+                      <Text style={styles.pillText}>{formatDate(r.date)}</Text>
+                    </View>
+                  </View>
+
+                  {/* Progress bar */}
+                  <View style={styles.cardProgressRow}>
+                    <Text style={styles.cardProgressLabel}>
+                      {r.totalDone} done · {r.totalUndone} missed
+                    </Text>
+                    <View style={styles.cardProgressBar}>
+                      <View style={[styles.cardProgressFill, {
+                        width: `${(r.totalDone + r.totalUndone) > 0
+                          ? Math.round((r.totalDone / (r.totalDone + r.totalUndone)) * 100)
+                          : 0}%`,
+                        backgroundColor: getConsistencyColor(
+                          (r.totalDone + r.totalUndone) > 0
+                            ? Math.round((r.totalDone / (r.totalDone + r.totalUndone)) * 100)
+                            : 0
+                        ),
+                      }]} />
+                    </View>
+                  </View>
+
+                  {/* Action buttons */}
+                  <View style={styles.cardActions}>
+                    {saving === r.id ? (
+                      <ActivityIndicator color="#c67ee2" size="small" style={{ flex: 1 }} />
+                    ) : !r.isDone ? (
+                      <Pressable style={[styles.actionBtn, { backgroundColor: '#4CAF50' }]} onPress={() => markDone(r.id)}>
+                        <Icon name="check" style={styles.actionBtnIcon} />
+                        <Text style={styles.actionBtnText}>Mark Done</Text>
+                      </Pressable>
+                    ) : (
+                      <Pressable style={[styles.actionBtn, { backgroundColor: '#FFA500' }]} onPress={() => undoDone(r.id)}>
+                        <Icon name="undo" style={styles.actionBtnIcon} />
+                        <Text style={styles.actionBtnText}>Undo</Text>
+                      </Pressable>
+                    )}
+                    <Pressable
+                      style={[styles.actionBtn, { backgroundColor: '#362c3a' }]}
+                      onPress={() => toggleActive(r.id)}
+                      disabled={saving === r.id}
+                    >
+                      <Icon name="bell-slash" style={styles.actionBtnIcon} />
+                      <Text style={styles.actionBtnText}>Turn Off</Text>
+                    </Pressable>
                   </View>
                 </View>
+              ))
+            )}
+          </View>
 
-                {/* Action Buttons */}
-                <View style={styles.actionButtons}>
-                  <Pressable 
-                    style={[styles.actionButton, styles.activateButton]}
-                    onPress={() => toggleReminderActive(reminder.id)}
+          {/* ── Inactive Reminders ────────────────────────────────────────── */}
+          {inactiveReminders.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.secRow}>
+                <Text style={styles.sectionTitle}>🔕 Inactive Reminders</Text>
+                <View style={[styles.countBadge, { backgroundColor: 'rgba(100,100,100,0.2)' }]}>
+                  <Text style={[styles.countBadgeText, { color: '#888' }]}>{inactiveReminders.length}</Text>
+                </View>
+              </View>
+
+              {inactiveReminders.map(r => (
+                <View key={r.id} style={[styles.reminderCard, styles.reminderCardInactive]}>
+                  <View style={styles.cardHeader}>
+                    <Icon name="bell-slash" style={[styles.cardIcon, { color: '#555' }]} />
+                    <View style={styles.cardInfo}>
+                      <Text style={[styles.cardName, { color: '#888' }]}>{r.name}</Text>
+                      <Text style={[styles.cardBenefits, { color: '#555' }]} numberOfLines={1}>{r.benefits}</Text>
+                    </View>
+                    <Switch
+                      value={r.isActive}
+                      onValueChange={() => toggleActive(r.id)}
+                      trackColor={{ false: '#2a2335', true: 'rgba(198,126,226,0.4)' }}
+                      thumbColor="#555"
+                      disabled={saving === r.id}
+                    />
+                  </View>
+
+                  <View style={styles.cardDetails}>
+                    <View style={styles.detailPill}>
+                      <Icon2 name="clock-circle" style={[styles.pillIcon, { color: '#555' }]} />
+                      <Text style={[styles.pillText, { color: '#555' }]}>{r.alarmTime}</Text>
+                    </View>
+                    <View style={styles.detailPill}>
+                      <Icon2 name="redo" style={[styles.pillIcon, { color: '#555' }]} />
+                      <Text style={[styles.pillText, { color: '#555' }]}>{r.repeat}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.cardProgressRow}>
+                    <Text style={[styles.cardProgressLabel, { color: '#555' }]}>
+                      {r.totalDone} done · {r.totalUndone} missed
+                    </Text>
+                  </View>
+
+                  <Pressable
+                    style={[styles.actionBtn, { backgroundColor: '#4CAF50', alignSelf: 'flex-start' }]}
+                    onPress={() => toggleActive(r.id)}
+                    disabled={saving === r.id}
                   >
-                    <Icon style={styles.actionIcon} name="bell" />
-                    <Text style={styles.actionButtonText}>Turn On</Text>
+                    {saving === r.id
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <><Icon name="bell" style={styles.actionBtnIcon} /><Text style={styles.actionBtnText}>Turn On</Text></>
+                    }
                   </Pressable>
                 </View>
-              </View>
-            ))}
-          </View>
-        )}
+              ))}
+            </View>
+          )}
 
-        {/* Today's Schedule */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Today's Schedule</Text>
-          <View style={styles.todayContainer}>
-            {activeReminders.slice(0, 5).map((reminder, index) => (
-              <View key={reminder.id} style={styles.todayItem}>
-                <View style={styles.todayTime}>
-                  <Text style={styles.todayTimeText}>{reminder.alarmTime}</Text>
-                </View>
-                <View style={styles.todayLine}>
-                  <View style={[styles.todayDot, reminder.isDone && styles.todayDotDone]} />
-                  {index < Math.min(activeReminders.length - 1, 4) && <View style={styles.todayLineVertical} />}
-                </View>
-                <View style={styles.todayContent}>
-                  <Text style={[styles.todayName, reminder.isDone && styles.todayNameDone]}>
-                    {reminder.name}
+          {/* ── How It Works ──────────────────────────────────────────────── */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>💡 How It Works</Text>
+            <View style={styles.instructionCard}>
+              {[
+                { icon: 'bell',         lib: 'fa',  text: 'Active Reminders',   body: 'Turn on habits to include them in your daily schedule and consistency tracker.' },
+                { icon: 'check-circle', lib: 'fa',  text: 'Mark Done',          body: 'Tap "Mark Done" on any habit when you complete it. Your streak grows!' },
+                { icon: 'moon',         lib: 'ant', text: 'End of Day',         body: 'Tap this at night to mark all incomplete habits as missed for the day.' },
+                { icon: 'line-chart',   lib: 'ant', text: 'Consistency Tracker', body: 'Your done vs missed ratio drives the % bar. Aim for 80%+ for Excellent.' },
+                { icon: 'clock-circle', lib: 'ant', text: 'Daily Schedule',     body: 'All active habits sorted by alarm time appear here each day.' },
+              ].map((item, i) => (
+                <View key={i} style={styles.instructionRow}>
+                  {item.lib === 'fa'
+                    ? <Icon name={item.icon} style={styles.instrIcon} />
+                    : <Icon2 name={item.icon} style={styles.instrIcon} />
+                  }
+                  <Text style={styles.instrText}>
+                    <Text style={styles.instrBold}>{item.text}: </Text>{item.body}
                   </Text>
-                  <Text style={styles.todayRepeat}>{reminder.repeat}</Text>
                 </View>
-                <View style={styles.todayStatus}>
-                  {reminder.isDone ? (
-                    <Icon style={styles.todayCheckIcon} name="check-circle" />
-                  ) : (
-                    <Icon style={styles.todayPendingIcon} name="circle-o" />
-                  )}
-                </View>
-              </View>
-            ))}
+              ))}
+            </View>
           </View>
-        </View>
 
-        {/* Instructions Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>How It Works</Text>
-          <View style={styles.instructionCard}>
-            <View style={styles.instructionItem}>
-              <Icon style={styles.instructionIcon} name="bell" />
-              <Text style={styles.instructionText}>
-                <Text style={styles.instructionBold}>Active Reminders:</Text> These alarms will notify you at the set time.
-              </Text>
-            </View>
-            <View style={styles.instructionItem}>
-              <Icon style={styles.instructionIcon} name="check-circle" />
-              <Text style={styles.instructionText}>
-                <Text style={styles.instructionBold}>Mark Done:</Text> Tap when you complete the habit to track your progress.
-              </Text>
-            </View>
-            <View style={styles.instructionItem}>
-              <Icon2 style={styles.instructionIcon} name="moon" />
-              <Text style={styles.instructionText}>
-                <Text style={styles.instructionBold}>End of Day:</Text> Marks all pending habits as undone automatically.
-              </Text>
-            </View>
-            <View style={styles.instructionItem}>
-              <Icon2 style={styles.instructionIcon} name="line-chart" />
-              <Text style={styles.instructionText}>
-                <Text style={styles.instructionBold}>Consistency:</Text> Track your done vs undone habits to see your progress over time.
-              </Text>
-            </View>
-          </View>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      )}
     </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#15041f",
-    zIndex: 400,
-  },
-  header1: {
-    height: 35,
-    backgroundColor: "#15041f",
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: "#1e1929",
-    borderBottomWidth: 1,
-    borderBottomColor: "#362c3a",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  closeIcon: {
-    fontSize: 30,
-    color: "#FFFFFF",
-  },
-  content: {
-    flex: 1,
-    padding: 15,
-  },
-  summaryContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    backgroundColor: "#211c24",
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 15,
-  },
-  summaryItem: {
-    alignItems: "center",
-    flex: 1,
-  },
-  summaryIcon: {
-    fontSize: 24,
-    color: "#c67ee2",
-    marginBottom: 8,
-  },
-  summaryValue: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  summaryLabel: {
-    fontSize: 12,
-    color: "#CCCCCC",
-  },
-  consistencySection: {
-    marginBottom: 15,
-  },
-  consistencyCard: {
-    backgroundColor: "#211c24",
-    borderRadius: 15,
-    padding: 15,
-  },
-  consistencyHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  consistencyTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  consistencyRate: {
-    fontSize: 24,
-    fontWeight: "bold",
-  },
-  progressBarContainer: {
-    height: 10,
-    backgroundColor: "#362c3a",
-    borderRadius: 5,
-    marginBottom: 15,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    borderRadius: 5,
-  },
-  statsRow: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  statItem: {
-    alignItems: "center",
-    flex: 1,
-  },
-  statDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: "#362c3a",
-  },
-  checkIcon: {
-    fontSize: 20,
-    color: "#4CAF50",
-    marginBottom: 5,
-  },
-  uncheckIcon: {
-    fontSize: 20,
-    color: "#FF6B6B",
-    marginBottom: 5,
-  },
-  statValue: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  statLabel: {
-    fontSize: 12,
-    color: "#CCCCCC",
-  },
-  consistencyNote: {
-    fontSize: 12,
-    color: "#888888",
-    textAlign: "center",
-    fontStyle: "italic",
-  },
-  actionsSection: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 15,
-  },
-  addHabitButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#c67ee2",
-    borderRadius: 12,
-    padding: 12,
-    gap: 8,
-  },
-  addIcon: {
-    fontSize: 20,
-    color: "#FFFFFF",
-  },
-  addHabitText: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  endDayButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#362c3a",
-    borderRadius: 12,
-    padding: 12,
-    gap: 8,
-  },
-  endDayIcon: {
-    fontSize: 20,
-    color: "#FFFFFF",
-  },
-  endDayText: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  section: {
-    backgroundColor: "#211c24",
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 15,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#c67ee2",
-    marginBottom: 15,
-  },
-  reminderCard: {
-    backgroundColor: "#1e1929",
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: "#c67ee2",
-  },
-  reminderCardDone: {
-    borderLeftColor: "#4CAF50",
-    opacity: 0.8,
-  },
-  reminderCardInactive: {
-    opacity: 0.6,
-    borderLeftColor: "#666666",
-  },
-  reminderHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 12,
-  },
-  reminderLeft: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    flex: 1,
-  },
-  reminderInfo: {
-    flex: 1,
-  },
-  reminderIcon: {
-    fontSize: 24,
-    color: "#c67ee2",
-    marginRight: 12,
-    marginTop: 2,
-  },
-  reminderIconInactive: {
-    color: "#666666",
-  },
-  reminderName: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-    marginBottom: 4,
-  },
-  reminderNameInactive: {
-    color: "#888888",
-  },
-  reminderBenefits: {
-    fontSize: 12,
-    color: "#CCCCCC",
-    flex: 1,
-  },
-  reminderBenefitsInactive: {
-    color: "#666666",
-  },
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: "#362c3a",
-  },
-  statusBadgeActive: {
-    backgroundColor: "#4CAF50",
-  },
-  statusBadgeInactive: {
-    backgroundColor: "#666666",
-  },
-  statusText: {
-    fontSize: 12,
-    color: "#CCCCCC",
-    fontWeight: "500",
-  },
-  statusTextActive: {
-    color: "#FFFFFF",
-  },
-  statusTextInactive: {
-    color: "#CCCCCC",
-  },
-  reminderDetails: {
-    borderTopWidth: 1,
-    borderTopColor: "#362c3a",
-    paddingTop: 12,
-    marginBottom: 10,
-  },
-  detailRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  detailIcon: {
-    fontSize: 14,
-    color: "#c67ee2",
-    marginRight: 8,
-    width: 20,
-  },
-  detailIconInactive: {
-    color: "#666666",
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: "#CCCCCC",
-    marginRight: 8,
-  },
-  detailLabelInactive: {
-    color: "#666666",
-  },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  detailValueInactive: {
-    color: "#888888",
-  },
-  progressStats: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    backgroundColor: "#211c24",
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
-  },
-  progressStat: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 5,
-  },
-  checkSmall: {
-    fontSize: 14,
-    color: "#4CAF50",
-  },
-  uncheckSmall: {
-    fontSize: 14,
-    color: "#FF6B6B",
-  },
-  inactiveIcon: {
-    color: "#666666",
-  },
-  progressStatValue: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  progressStatLabel: {
-    fontSize: 12,
-    color: "#CCCCCC",
-  },
-  inactiveText: {
-    color: "#666666",
-  },
-  actionButtons: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-    padding: 10,
-    gap: 5,
-  },
-  doneButton: {
-    backgroundColor: "#4CAF50",
-  },
-  undoneButton: {
-    backgroundColor: "#FFA500",
-  },
-  toggleButton: {
-    backgroundColor: "#362c3a",
-  },
-  activateButton: {
-    backgroundColor: "#4CAF50",
-  },
-  actionIcon: {
-    fontSize: 16,
-    color: "#FFFFFF",
-  },
-  actionButtonText: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  todayContainer: {
-    backgroundColor: "#1e1929",
-    borderRadius: 12,
-    padding: 15,
-  },
-  todayItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 15,
-  },
-  todayTime: {
-    width: 70,
-  },
-  todayTimeText: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#c67ee2",
-  },
-  todayLine: {
-    alignItems: "center",
-    marginRight: 12,
-  },
-  todayDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: "#c67ee2",
-  },
-  todayDotDone: {
-    backgroundColor: "#4CAF50",
-  },
-  todayLineVertical: {
-    width: 2,
-    height: 40,
-    backgroundColor: "#362c3a",
-    marginTop: 4,
-  },
-  todayContent: {
-    flex: 1,
-  },
-  todayName: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-    marginBottom: 4,
-  },
-  todayNameDone: {
-    textDecorationLine: "line-through",
-    color: "#4CAF50",
-  },
-  todayRepeat: {
-    fontSize: 12,
-    color: "#888888",
-  },
-  todayStatus: {
-    marginLeft: 10,
-  },
-  todayCheckIcon: {
-    fontSize: 20,
-    color: "#4CAF50",
-  },
-  todayPendingIcon: {
-    fontSize: 20,
-    color: "#666666",
-  },
-  instructionCard: {
-    backgroundColor: "#1e1929",
-    borderRadius: 12,
-    padding: 15,
-  },
-  instructionItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 12,
-    gap: 10,
-  },
-  instructionIcon: {
-    fontSize: 18,
-    color: "#c67ee2",
-    marginTop: 2,
-  },
-  instructionText: {
-    fontSize: 14,
-    color: "#CCCCCC",
-    flex: 1,
-  },
-  instructionBold: {
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-});
+  container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#15041f', zIndex: 400 },
+  header1:   { height: 35, backgroundColor: '#15041f' },
+  header:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, backgroundColor: '#1e1929', borderBottomWidth: 1, borderBottomColor: '#362c3a' },
+  title:     { fontSize: 24, fontWeight: 'bold', color: '#fff' },
+  closeIcon: { fontSize: 30, color: '#fff' },
+  content:   { flex: 1, padding: 15 },
+  loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
+  loadingText: { color: '#888', fontSize: 16 },
+  emptyHint: { fontSize: 13, color: '#555', fontStyle: 'italic', textAlign: 'center', paddingVertical: 12 },
 
+  // Summary row
+  summaryRow: { flexDirection: 'row', gap: 8, marginBottom: 15 },
+  summaryCard: { flex: 1, backgroundColor: '#211c24', borderRadius: 12, padding: 10, alignItems: 'center', borderWidth: 1, gap: 4 },
+  summaryIcon: { fontSize: 20 },
+  summaryValue: { fontSize: 20, fontWeight: '800', color: '#fff' },
+  summaryLabel: { fontSize: 10, color: '#888', fontWeight: '600' },
+
+  // Section
+  section: { backgroundColor: '#211c24', borderRadius: 16, padding: 16, marginBottom: 15 },
+  secRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  sectionTitle: { fontSize: 17, fontWeight: '800', color: '#c67ee2' },
+  countBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
+  countBadgeText: { fontSize: 13, fontWeight: '700' },
+
+  // Consistency tracker
+  rateRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  rateLabel: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  rateSubLabel: { fontSize: 12, color: '#888', marginTop: 2 },
+  ratePct: { fontSize: 32, fontWeight: '900' },
+  bigBarBg: { height: 12, backgroundColor: '#2a2335', borderRadius: 6, overflow: 'hidden', marginBottom: 16 },
+  bigBarFill: { height: 12, borderRadius: 6 },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', marginBottom: 14 },
+  statBox: { alignItems: 'center', flex: 1, gap: 4 },
+  statDivider: { width: 1, height: 40, backgroundColor: '#362c3a' },
+  statIconGreen: { fontSize: 22, color: '#4CAF50' },
+  statIconRed: { fontSize: 22, color: '#FF6B6B' },
+  statIconGrey: { fontSize: 22, color: '#666' },
+  statNum: { fontSize: 20, fontWeight: '800', color: '#fff' },
+  statLbl: { fontSize: 11, color: '#888' },
+  habitBarsBox: { backgroundColor: '#2a2335', borderRadius: 12, padding: 12, gap: 10 },
+  habitBarsTitle: { fontSize: 12, fontWeight: '700', color: '#aaa', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
+  habitBarRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  habitBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, width: 120 },
+  habitDot: { width: 7, height: 7, borderRadius: 4, flexShrink: 0 },
+  habitBarName: { fontSize: 12, color: '#ccc', flex: 1 },
+  habitBarPct: { fontSize: 11, fontWeight: '700', width: 32, textAlign: 'right' },
+
+  // Quick actions
+  actionsRow: { flexDirection: 'row', gap: 10, marginBottom: 15 },
+  addBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#c67ee2', borderRadius: 12, padding: 13, gap: 8 },
+  addBtnIcon: { fontSize: 18, color: '#fff' },
+  addBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  endDayBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#2a2335', borderRadius: 12, padding: 13, gap: 8, borderWidth: 1, borderColor: '#362c3a' },
+  endDayBtnIcon: { fontSize: 18, color: '#ccc' },
+  endDayBtnText: { fontSize: 14, fontWeight: '700', color: '#ccc' },
+
+  // Today's schedule / timeline
+  todayBadge: { backgroundColor: 'rgba(198,126,226,0.15)', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10 },
+  todayBadgeText: { fontSize: 12, color: '#c67ee2', fontWeight: '700' },
+  timeline: { gap: 0 },
+  timelineItem: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 4 },
+  timeCol: { width: 78, paddingTop: 6 },
+  timeText: { fontSize: 13, fontWeight: '700', color: '#c67ee2' },
+  timelineTrack: { alignItems: 'center', width: 28 },
+  timelineDot: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', zIndex: 1 },
+  timelineLine: { width: 2, flex: 1, minHeight: 20, backgroundColor: '#362c3a', marginVertical: 2 },
+  timelineContent: { flex: 1, paddingLeft: 10, paddingTop: 5, paddingBottom: 14 },
+  tlName: { fontSize: 14, fontWeight: '700', color: '#fff', marginBottom: 2 },
+  tlNameDone: { textDecorationLine: 'line-through', color: '#4CAF50' },
+  tlRepeat: { fontSize: 11, color: '#666' },
+  tlStatus: { marginTop: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, alignSelf: 'flex-start' },
+  tlStatusText: { fontSize: 11, fontWeight: '700' },
+
+  // Reminder cards
+  reminderCard: { backgroundColor: '#1a1528', borderRadius: 14, padding: 14, marginBottom: 12, borderLeftWidth: 4, borderLeftColor: '#c67ee2' },
+  reminderCardDone: { borderLeftColor: '#4CAF50' },
+  reminderCardInactive: { borderLeftColor: '#333', opacity: 0.7 },
+  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
+  cardIcon: { fontSize: 22, marginTop: 2 },
+  cardInfo: { flex: 1 },
+  cardName: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 3 },
+  cardBenefits: { fontSize: 12, color: '#888', lineHeight: 16 },
+  cardDetails: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
+  detailPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2a2335', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, gap: 5 },
+  pillIcon: { fontSize: 12, color: '#c67ee2' },
+  pillText: { fontSize: 12, color: '#ccc', fontWeight: '600' },
+  cardProgressRow: { marginBottom: 10 },
+  cardProgressLabel: { fontSize: 11, color: '#888', marginBottom: 4 },
+  cardProgressBar: { height: 6, backgroundColor: '#2a2335', borderRadius: 3, overflow: 'hidden' },
+  cardProgressFill: { height: 6, borderRadius: 3 },
+  cardActions: { flexDirection: 'row', gap: 8 },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flex: 1, width: 80, height: 25, borderRadius: 10, gap: 6 },
+  actionBtnIcon: { fontSize: 14, color: '#fff' },
+  actionBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
+
+  // How it works
+  instructionCard: { gap: 12 },
+  instructionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  instrIcon: { fontSize: 17, color: '#c67ee2', marginTop: 2 },
+  instrText: { fontSize: 13, color: '#ccc', flex: 1, lineHeight: 19 },
+  instrBold: { fontWeight: '700', color: '#fff' },
+});

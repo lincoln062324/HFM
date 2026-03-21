@@ -1,8 +1,14 @@
-// Settings Screen Component
-import { StyleSheet, Text, View, ScrollView, Pressable, Switch, Alert, useColorScheme, Modal, Animated } from "react-native";
-import React, { useState, useEffect, useRef } from "react";
+// SettingsScreen.tsx
+// Theme picker · Camera sound toggle · Live habit reminder alerts · About section
+import {
+  StyleSheet, Text, View, ScrollView, Pressable,
+  Switch, Alert, Modal, useColorScheme,
+} from "react-native";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Icon from "react-native-vector-icons/FontAwesome";
-import * as Haptics from "expo-haptics";
+import Icon5 from "react-native-vector-icons/FontAwesome5";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import supabase from "../lib/supabase";
 
 interface SettingsScreenProps {
   onClose: () => void;
@@ -11,1229 +17,417 @@ interface SettingsScreenProps {
 }
 
 interface ThemeColor {
-  id: string;
-  name: string;
-  primary: string;
-  secondary: string;
-  background: string;
-  card: string;
-  text: string;
-  accent: string;
+  id: string; name: string; emoji: string;
+  primary: string; secondary: string; background: string;
+  card: string; text: string; accent: string; desc: string;
 }
-
-const THEME_COLORS: ThemeColor[] = [
-  {
-    id: 'system',
-    name: 'System',
-    primary: '#2196F3',
-    secondary: '#1a237e',
-    background: '#0d1b2a',
-    card: '#1b263b',
-    text: '#FFFFFF',
-    accent: '#64b5f6',
-  },
-  {
-    id: 'purple',
-    name: 'Purple Dream',
-    primary: '#c67ee2',
-    secondary: '#1e1929',
-    background: '#15041f',
-    card: '#211c24',
-    text: '#FFFFFF',
-    accent: '#84d7f4',
-  },
-  {
-    id: 'blue',
-    name: 'Ocean Blue',
-    primary: '#2196F3',
-    secondary: '#1a237e',
-    background: '#0d1b2a',
-    card: '#1b263b',
-    text: '#FFFFFF',
-    accent: '#64b5f6',
-  },
-  {
-    id: 'green',
-    name: 'Forest Green',
-    primary: '#4CAF50',
-    secondary: '#1b5e20',
-    background: '#0a1f0a',
-    card: '#1b3a1b',
-    text: '#FFFFFF',
-    accent: '#81c784',
-  },
-  {
-    id: 'orange',
-    name: 'Sunset Orange',
-    primary: '#FF9800',
-    secondary: '#e65100',
-    background: '#1a0f00',
-    card: '#2d1f0a',
-    text: '#FFFFFF',
-    accent: '#ffb74d',
-  },
-  {
-    id: 'red',
-    name: 'Cherry Red',
-    primary: '#f44336',
-    secondary: '#b71c1c',
-    background: '#1a0505',
-    card: '#2d0f0f',
-    text: '#FFFFFF',
-    accent: '#e57373',
-  },
-  {
-    id: 'teal',
-    name: 'Teal Time',
-    primary: '#009688',
-    secondary: '#004d40',
-    background: '#001a17',
-    card: '#0d2d28',
-    text: '#FFFFFF',
-    accent: '#4db6ac',
-  },
-];
-
-// Get system theme colors
-const getSystemThemeColors = (isDark: boolean): ThemeColor => ({
-  id: 'system',
-  name: 'System',
-  primary: isDark ? '#2196F3' : '#2196F3',
-  secondary: isDark ? '#1a237e' : '#bbdefb',
-  background: isDark ? '#0d1b2a' : '#f5f5f5',
-  card: isDark ? '#1b263b' : '#ffffff',
-  text: isDark ? '#FFFFFF' : '#000000',
-  accent: isDark ? '#64b5f6' : '#1976D2',
-});
 
 interface AppSettings {
-  theme: string;
-  notifications: boolean;
-  soundEffects: boolean;
-  vibration: boolean;
-  autoLock: boolean;
-  biometricAuth: boolean;
+  theme: string; notifications: boolean;
+  cameraSound: boolean; vibration: boolean;
 }
 
-const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'purple',
-  notifications: true,
-  soundEffects: true,
-  vibration: true,
-  autoLock: false,
-  biometricAuth: false,
-};
+const THEMES: ThemeColor[] = [
+  { id:'purple',   name:'Purple Dream',   emoji:'💜', primary:'#c67ee2', secondary:'#1e1929', background:'#15041f', card:'#211c24', text:'#FFFFFF', accent:'#84d7f4', desc:'Soft lavender on deep plum' },
+  { id:'midnight', name:'Midnight Blue',  emoji:'🌙', primary:'#5c9cef', secondary:'#1a2035', background:'#0d1423', card:'#182030', text:'#FFFFFF', accent:'#7fc8f8', desc:'Cool steel blue on deep navy' },
+  { id:'forest',   name:'Forest Green',   emoji:'🌿', primary:'#5ccc7f', secondary:'#1a2e1c', background:'#0c1f0e', card:'#192d1b', text:'#FFFFFF', accent:'#a8e6b8', desc:'Fresh mint on deep forest' },
+  { id:'ember',    name:'Ember Orange',   emoji:'🔥', primary:'#ff9f4a', secondary:'#2a1a0a', background:'#1a0e04', card:'#261706', text:'#FFFFFF', accent:'#ffd080', desc:'Warm amber on dark charcoal' },
+  { id:'rose',     name:'Rose Gold',      emoji:'🌸', primary:'#e8849a', secondary:'#2a1520', background:'#1a0c14', card:'#26131e', text:'#FFFFFF', accent:'#f5b8c8', desc:'Dusty rose on deep burgundy' },
+  { id:'teal',     name:'Teal Mist',      emoji:'🌊', primary:'#38c9c0', secondary:'#0f2524', background:'#071918', card:'#0e2523', text:'#FFFFFF', accent:'#7de8e2', desc:'Ocean teal on near-black' },
+  { id:'slate',    name:'Slate Grey',     emoji:'🪨', primary:'#94a3b8', secondary:'#1e2432', background:'#111620', card:'#1a2030', text:'#FFFFFF', accent:'#cbd5e1', desc:'Cool grey on dark slate' },
+  { id:'gold',     name:'Golden Hour',    emoji:'✨', primary:'#f0c040', secondary:'#221a06', background:'#160f02', card:'#201608', text:'#FFFFFF', accent:'#ffe08a', desc:'Rich gold on espresso' },
+];
 
-// Countdown Timer Component
-const CountdownModal = ({ 
-  visible, 
-  themeName, 
-  countdown, 
-  onConfirm, 
-  onCancel 
-}: { 
-  visible: boolean; 
-  themeName: string; 
-  countdown: number; 
-  onConfirm: () => void; 
-  onCancel: () => void;
-}) => {
-  return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.countdownModalOverlay}>
-        <View style={styles.countdownModalContent}>
-          <Icon style={styles.countdownIcon} name="clock-o" />
-          <Text style={styles.countdownTitle}>Applying Theme</Text>
-          <Text style={styles.countdownThemeName}>{themeName}</Text>
-          <View style={styles.countdownCircle}>
-            <Text style={styles.countdownNumber}>{countdown}</Text>
-          </View>
-          <Text style={styles.countdownText}>
-            {countdown > 0 ? "Theme will revert if not confirmed..." : "Time's up! Reverting theme..."}
-          </Text>
-          <View style={styles.countdownButtons}>
-            <Pressable style={styles.countdownConfirmButton} onPress={onConfirm}>
-              <Icon style={styles.countdownButtonIcon} name="check" />
-              <Text style={styles.countdownConfirmText}>Confirm</Text>
-            </Pressable>
-            <Pressable style={styles.countdownCancelButton} onPress={onCancel}>
-              <Icon style={styles.countdownButtonIcon} name="times" />
-              <Text style={styles.countdownCancelText}>Cancel</Text>
-            </Pressable>
-          </View>
+const DEFAULT_SETTINGS: AppSettings = { theme:'purple', notifications:true, cameraSound:true, vibration:true };
+const SETTINGS_KEY = '@fitlife_settings';
+
+const CountdownModal = ({ visible, themeName, countdown, primaryColor, onConfirm, onCancel }:
+  { visible:boolean; themeName:string; countdown:number; primaryColor:string; onConfirm:()=>void; onCancel:()=>void }) => (
+  <Modal visible={visible} transparent animationType="fade">
+    <View style={ms.overlay}>
+      <View style={ms.card}>
+        <Icon name="clock-o" style={[ms.icon,{color:primaryColor}]} />
+        <Text style={ms.title}>Applying Theme</Text>
+        <Text style={[ms.sub,{color:primaryColor}]}>{themeName}</Text>
+        <View style={[ms.circle,{borderColor:primaryColor}]}>
+          <Text style={ms.num}>{countdown}</Text>
+        </View>
+        <Text style={ms.hint}>{countdown>0?'Confirm to keep, or it reverts…':'Reverting…'}</Text>
+        <View style={ms.row}>
+          <Pressable style={[ms.btn,{backgroundColor:primaryColor}]} onPress={onConfirm}>
+            <Icon name="check" size={16} color="#fff"/><Text style={ms.btnTxt}>Keep It</Text>
+          </Pressable>
+          <Pressable style={[ms.btn,{backgroundColor:'#3a2a3a'}]} onPress={onCancel}>
+            <Icon name="times" size={16} color="#fff"/><Text style={ms.btnTxt}>Revert</Text>
+          </Pressable>
         </View>
       </View>
-    </Modal>
-  );
-};
+    </View>
+  </Modal>
+);
+const ms = StyleSheet.create({
+  overlay:{flex:1,backgroundColor:'rgba(0,0,0,0.85)',justifyContent:'center',alignItems:'center'},
+  card:{backgroundColor:'#1e1929',borderRadius:22,padding:28,width:'86%',alignItems:'center',gap:10,borderWidth:1,borderColor:'#362c3a'},
+  icon:{fontSize:44,marginBottom:4}, title:{fontSize:22,fontWeight:'800',color:'#fff'},
+  sub:{fontSize:16,fontWeight:'600'}, num:{fontSize:34,fontWeight:'900',color:'#fff'},
+  hint:{fontSize:13,color:'#888',textAlign:'center'},
+  circle:{width:76,height:76,borderRadius:38,borderWidth:3,justifyContent:'center',alignItems:'center',backgroundColor:'#2a2335'},
+  row:{flexDirection:'row',gap:12,marginTop:6,width:'100%'},
+  btn:{flex:1,flexDirection:'row',alignItems:'center',justifyContent:'center',paddingVertical:12,borderRadius:12,gap:8},
+  btnTxt:{fontSize:15,fontWeight:'700',color:'#fff'},
+});
 
-// Permission Modal Component
-const PermissionModal = ({ 
-  visible, 
-  title, 
-  description, 
-  iconName, 
-  onConfirm, 
-  onCancel 
-}: { 
-  visible: boolean; 
-  title: string; 
-  description: string; 
-  iconName: string; 
-  onConfirm: () => void; 
-  onCancel: () => void;
-}) => {
-  return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.permissionModalOverlay}>
-        <View style={styles.permissionModalContent}>
-          <Icon style={styles.permissionIcon} name={iconName} />
-          <Text style={styles.permissionTitle}>{title}</Text>
-          <Text style={styles.permissionDescription}>{description}</Text>
-          <View style={styles.permissionButtons}>
-            <Pressable style={styles.permissionAllowButton} onPress={onConfirm}>
-              <Icon style={styles.permissionButtonIcon} name="check" />
-              <Text style={styles.permissionAllowText}>Allow</Text>
-            </Pressable>
-            <Pressable style={styles.permissionDenyButton} onPress={onCancel}>
-              <Icon style={styles.permissionButtonIcon} name="times" />
-              <Text style={styles.permissionDenyText}>Don't Allow</Text>
-            </Pressable>
-          </View>
+const HabitAlertModal = ({ visible, habitName, benefits, alarmTime, onDone, onDismiss }:
+  { visible:boolean; habitName:string; benefits:string; alarmTime:string; onDone:()=>void; onDismiss:()=>void }) => (
+  <Modal visible={visible} transparent animationType="slide">
+    <View style={as.overlay}>
+      <View style={as.card}>
+        <View style={as.circle}><Icon name="bell" size={28} color="#fff"/></View>
+        <Text style={as.time}>{alarmTime}</Text>
+        <Text style={as.label}>Time for your habit!</Text>
+        <Text style={as.name}>{habitName}</Text>
+        <Text style={as.benefits}>{benefits}</Text>
+        <View style={as.row}>
+          <Pressable style={as.btnDone} onPress={onDone}>
+            <Icon name="check" size={16} color="#fff"/><Text style={as.btnTxt}>Mark Done</Text>
+          </Pressable>
+          <Pressable style={as.btnDismiss} onPress={onDismiss}>
+            <Icon name="times" size={16} color="#fff"/><Text style={as.btnTxt}>Dismiss</Text>
+          </Pressable>
         </View>
       </View>
-    </Modal>
-  );
-};
+    </View>
+  </Modal>
+);
+const as = StyleSheet.create({
+  overlay:{flex:1,backgroundColor:'rgba(0,0,0,0.8)',justifyContent:'flex-end'},
+  card:{backgroundColor:'#1e1929',borderTopLeftRadius:26,borderTopRightRadius:26,padding:28,alignItems:'center',gap:10,borderWidth:1,borderColor:'#362c3a'},
+  circle:{width:64,height:64,borderRadius:32,backgroundColor:'#c67ee2',justifyContent:'center',alignItems:'center',marginBottom:4},
+  time:{fontSize:13,color:'#888',fontWeight:'600'}, label:{fontSize:16,color:'#888'},
+  name:{fontSize:22,fontWeight:'800',color:'#fff',textAlign:'center'},
+  benefits:{fontSize:13,color:'#aaa',textAlign:'center',lineHeight:18},
+  row:{flexDirection:'row',gap:12,width:'100%',marginTop:6},
+  btnDone:{flex:1,flexDirection:'row',alignItems:'center',justifyContent:'center',backgroundColor:'#4CAF50',paddingVertical:14,borderRadius:14,gap:8},
+  btnDismiss:{flex:1,flexDirection:'row',alignItems:'center',justifyContent:'center',backgroundColor:'#362c3a',paddingVertical:14,borderRadius:14,gap:8},
+  btnTxt:{fontSize:15,fontWeight:'700',color:'#fff'},
+});
 
-// Verification Modal Component
-const VerificationModal = ({ 
-  visible, 
-  title, 
-  description, 
-  iconName, 
-  onConfirm, 
-  onCancel 
-}: { 
-  visible: boolean; 
-  title: string; 
-  description: string; 
-  iconName: string; 
-  onConfirm: () => void; 
-  onCancel: () => void;
-}) => {
-  const [pin, setPin] = useState('');
-  const [isVerifying, setIsVerifying] = useState(false);
-
-  const handlePinPress = (num: string) => {
-    if (pin.length < 4) {
-      const newPin = pin + num;
-      setPin(newPin);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      
-      if (newPin.length === 4) {
-        // Simulate verification
-        setIsVerifying(true);
-        setTimeout(() => {
-          setIsVerifying(false);
-          onConfirm();
-        }, 1000);
-      }
-    }
-  };
-
-  const handleDelete = () => {
-    setPin(pin.slice(0, -1));
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.verificationModalOverlay}>
-        <View style={styles.verificationModalContent}>
-          <Icon style={styles.verificationIcon} name={iconName} />
-          <Text style={styles.verificationTitle}>{title}</Text>
-          <Text style={styles.verificationDescription}>{description}</Text>
-          
-          {/* PIN Dots */}
-          <View style={styles.pinDotsContainer}>
-            {[0, 1, 2, 3].map((index) => (
-              <View 
-                key={index} 
-                style={[
-                  styles.pinDot, 
-                  pin.length > index && styles.pinDotFilled
-                ]} 
-              />
-            ))}
-          </View>
-          
-          {isVerifying ? (
-            <Text style={styles.verifyingText}>Verifying...</Text>
-          ) : (
-            <>
-              {/* Number Pad */}
-              <View style={styles.numberPad}>
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'].map((num, index) => (
-                  <Pressable 
-                    key={index} 
-                    style={[styles.numberPadButton, num === '' && styles.numberPadButtonEmpty]}
-                    onPress={() => num === 'del' ? handleDelete() : num && handlePinPress(num)}
-                    disabled={num === ''}
-                  >
-                    {num === 'del' ? (
-                      <Icon name="delete" style={styles.numberPadIcon} />
-                    ) : (
-                      <Text style={styles.numberPadText}>{num}</Text>
-                    )}
-                  </Pressable>
-                ))}
-              </View>
-            </>
-          )}
-          
-          <View style={styles.verificationButtons}>
-            <Pressable style={styles.verificationCancelButton} onPress={onCancel}>
-              <Text style={styles.verificationCancelText}>Cancel</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-};
-
-export default function SettingsScreen({ onClose, currentTheme: initialTheme, onThemeChange }: SettingsScreenProps): React.JSX.Element {
-  const systemColorScheme = useColorScheme();
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [selectedTheme, setSelectedTheme] = useState(initialTheme || 'purple');
-  const [pendingTheme, setPendingTheme] = useState<string | null>(null);
+export default function SettingsScreen({ onClose, currentTheme: initialTheme, onThemeChange }: SettingsScreenProps) {
+  const [settings, setSettings] = useState<AppSettings>({...DEFAULT_SETTINGS, theme: initialTheme||'purple'});
+  const [selectedTheme, setSelectedTheme] = useState(initialTheme||'purple');
+  const [pendingTheme, setPendingTheme] = useState<string|null>(null);
   const [countdown, setCountdown] = useState(5);
-  const [showCountdownModal, setShowCountdownModal] = useState(false);
-  
-  // Permission modals state
-  const [showNotificationPermission, setShowNotificationPermission] = useState(false);
-  const [showSoundPermission, setShowSoundPermission] = useState(false);
-  const [showVibrationPermission, setShowVibrationPermission] = useState(false);
-  const [pendingNotificationSetting, setPendingNotificationSetting] = useState<boolean | null>(null);
-  const [pendingSoundSetting, setPendingSoundSetting] = useState<boolean | null>(null);
-  const [pendingVibrationSetting, setPendingVibrationSetting] = useState<boolean | null>(null);
-  
-  // Verification modals state
-  const [showAutoLockVerification, setShowAutoLockVerification] = useState(false);
-  const [showBiometricVerification, setShowBiometricVerification] = useState(false);
-  const [pendingAutoLockSetting, setPendingAutoLockSetting] = useState<boolean | null>(null);
-  const [pendingBiometricSetting, setPendingBiometricSetting] = useState<boolean | null>(null);
-  
-  const countdownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showCountdown, setShowCountdown] = useState(false);
+  const countdownRef = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const [activeAlert, setActiveAlert] = useState<{id:string|number;name:string;benefits:string;alarmTime:string}|null>(null);
+  const [reminders, setReminders] = useState<{id:string|number;name:string;benefits:string;alarmTime:string}[]>([]);
+  const clockRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const firedRef = useRef<Set<string>>(new Set());
 
-  // Get current theme based on selection
-  const getCurrentTheme = (): ThemeColor => {
-    if (selectedTheme === 'system') {
-      return getSystemThemeColors(systemColorScheme === 'dark');
-    }
-    return THEME_COLORS.find(t => t.id === selectedTheme) || THEME_COLORS[1];
-  };
-
-  const currentTheme = getCurrentTheme();
-
-  // Countdown effect
   useEffect(() => {
-    if (showCountdownModal && countdown > 0) {
-      countdownTimerRef.current = setTimeout(() => {
-        setCountdown(prev => prev - 1);
-      }, 1000);
-    } else if (showCountdownModal && countdown === 0) {
-      // Time's up - revert to default
-      handleRevertTheme();
-    }
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(SETTINGS_KEY);
+        if (saved) setSettings(prev => ({...prev, ...JSON.parse(saved)}));
+      } catch {}
+    })();
+  }, []);
 
-    return () => {
-      if (countdownTimerRef.current) {
-        clearTimeout(countdownTimerRef.current);
+  const saveSettings = useCallback(async (next: AppSettings) => {
+    try { await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch {}
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user?.id) return;
+        const { data } = await supabase.from('user_reminders')
+          .select('id, name, benefits, alarm_time, is_active')
+          .eq('user_id', session.user.id).eq('is_active', true);
+        if (data) setReminders(data.map((r: any) => ({
+          id: r.id, name: r.name??'Habit', benefits: r.benefits??'', alarmTime: r.alarm_time??'',
+        })));
+      } catch {}
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!settings.notifications) return;
+    const check = () => {
+      const now = new Date();
+      const time24 = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+      const dayKey = now.toISOString().split('T')[0];
+      for (const r of reminders) {
+        let h = 0, m = 0;
+        const clean = r.alarmTime.replace(/\s*(AM|PM)/i,'').trim();
+        [h, m] = clean.split(':').map(Number);
+        if (/PM/i.test(r.alarmTime) && h!==12) h+=12;
+        if (/AM/i.test(r.alarmTime) && h===12) h=0;
+        const alarm = `${String(h).padStart(2,'0')}:${String(m||0).padStart(2,'0')}`;
+        const key = `${String(r.id)}-${dayKey}-${alarm}`;
+        if (alarm===time24 && !firedRef.current.has(key)) {
+          firedRef.current.add(key);
+          setActiveAlert({id:r.id, name:r.name, benefits:r.benefits, alarmTime:r.alarmTime});
+          break;
+        }
       }
     };
-  }, [showCountdownModal, countdown]);
+    check();
+    clockRef.current = setInterval(check, 30_000);
+    return () => { if (clockRef.current) clearInterval(clockRef.current); };
+  }, [settings.notifications, reminders]);
 
-  const handleRevertTheme = () => {
-    setShowCountdownModal(false);
-    setPendingTheme(null);
-    setCountdown(5);
-    Alert.alert('Theme Reverted', 'Theme was reverted to the previous state due to timeout.');
-  };
-
-  const handleConfirmTheme = () => {
-    if (pendingTheme) {
-      setSettings(prev => ({ ...prev, theme: pendingTheme }));
-      setShowCountdownModal(false);
-      setPendingTheme(null);
-      setCountdown(5);
-      if (onThemeChange) {
-        onThemeChange(pendingTheme);
-      }
-      Alert.alert('Theme Applied', `Theme has been successfully applied!`);
+  useEffect(() => {
+    if (showCountdown && countdown > 0) {
+      countdownRef.current = setTimeout(() => setCountdown(c=>c-1), 1000);
+    } else if (showCountdown && countdown === 0) {
+      revertTheme();
     }
+    return () => { if (countdownRef.current) clearTimeout(countdownRef.current); };
+  }, [showCountdown, countdown]);
+
+  const revertTheme = () => {
+    setShowCountdown(false); setPendingTheme(null); setCountdown(5);
+    onThemeChange?.(selectedTheme);
+    Alert.alert('Reverted','Theme was reverted because it wasn\'t confirmed.');
   };
 
-  const handleThemeSelect = (themeId: string) => {
-    if (themeId === selectedTheme) return;
-    
-    setPendingTheme(themeId);
-    setCountdown(5);
-    setShowCountdownModal(true);
+  const confirmTheme = () => {
+    if (!pendingTheme) return;
+    const next = {...settings, theme: pendingTheme};
+    setSettings(next); setSelectedTheme(pendingTheme);
+    setShowCountdown(false); setPendingTheme(null); setCountdown(5);
+    saveSettings(next); onThemeChange?.(pendingTheme);
+  };
+
+  const selectTheme = (id: string) => {
+    if (id===selectedTheme) return;
+    setPendingTheme(id); setCountdown(5); setShowCountdown(true);
+    onThemeChange?.(id);
   };
 
   const toggleSetting = (key: keyof AppSettings) => {
-    setSettings(prev => ({
-      ...prev,
-      [key]: !prev[key],
-    }));
+    const next = {...settings, [key]: !settings[key]};
+    setSettings(next); saveSettings(next);
   };
 
-  // Notification toggle with permission modal
-  const handleNotificationToggle = (value: boolean) => {
-    if (value && !settings.notifications) {
-      // Turning on - show permission modal
-      setPendingNotificationSetting(value);
-      setShowNotificationPermission(true);
-    } else {
-      toggleSetting('notifications');
-    }
+  const handleAlertDone = async () => {
+    if (!activeAlert) return;
+    try {
+      const r = reminders.find(x => x.id === activeAlert.id);
+      if (r) await supabase.from('user_reminders').update({total_done:1}).eq('id',activeAlert.id);
+    } catch {}
+    Alert.alert('✅ Well done!',`"${activeAlert.name}" marked as completed!`);
+    setActiveAlert(null);
   };
 
-  // Sound toggle with permission modal
-  const handleSoundToggle = (value: boolean) => {
-    if (value && !settings.soundEffects) {
-      setPendingSoundSetting(value);
-      setShowSoundPermission(true);
-    } else {
-      toggleSetting('soundEffects');
-    }
-  };
-
-  // Vibration toggle with permission modal
-  const handleVibrationToggle = (value: boolean) => {
-    if (value && !settings.vibration) {
-      setPendingVibrationSetting(value);
-      setShowVibrationPermission(true);
-    } else {
-      toggleSetting('vibration');
-    }
-  };
-
-  // Auto lock toggle with verification
-  const handleAutoLockToggle = (value: boolean) => {
-    if (value && !settings.autoLock) {
-      setPendingAutoLockSetting(value);
-      setShowAutoLockVerification(true);
-    } else {
-      toggleSetting('autoLock');
-    }
-  };
-
-  // Biometric toggle with verification
-  const handleBiometricToggle = (value: boolean) => {
-    if (value && !settings.biometricAuth) {
-      setPendingBiometricSetting(value);
-      setShowBiometricVerification(true);
-    } else {
-      toggleSetting('biometricAuth');
-    }
-  };
-
-  // Confirm notification permission
-  const confirmNotificationPermission = () => {
-    setSettings(prev => ({ ...prev, notifications: true }));
-    setShowNotificationPermission(false);
-    setPendingNotificationSetting(null);
-    Alert.alert('Success', 'Push notifications have been enabled!');
-  };
-
-  // Confirm sound permission
-  const confirmSoundPermission = () => {
-    setSettings(prev => ({ ...prev, soundEffects: true }));
-    setShowSoundPermission(false);
-    setPendingSoundSetting(null);
-    Alert.alert('Success', 'Sound effects have been enabled!');
-  };
-
-  // Confirm vibration permission
-  const confirmVibrationPermission = () => {
-    setSettings(prev => ({ ...prev, vibration: true }));
-    setShowVibrationPermission(false);
-    setPendingVibrationSetting(null);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Success', 'Vibration has been enabled!');
-  };
-
-  // Confirm auto lock verification
-  const confirmAutoLockVerification = () => {
-    setSettings(prev => ({ ...prev, autoLock: true }));
-    setShowAutoLockVerification(false);
-    setPendingAutoLockSetting(null);
-    Alert.alert('Success', 'Auto lock has been enabled!');
-  };
-
-  // Confirm biometric verification
-  const confirmBiometricVerification = () => {
-    setSettings(prev => ({ ...prev, biometricAuth: true }));
-    setShowBiometricVerification(false);
-    setPendingBiometricSetting(null);
-    Alert.alert('Success', 'Biometric authentication has been enabled!');
-  };
+  const T = THEMES.find(t => t.id === selectedTheme) || THEMES[0];
 
   return (
-    <View style={[styles.container, { backgroundColor: currentTheme.background }]}>
-     <View style={styles.header1} />
-      <View style={[styles.header, { backgroundColor: currentTheme.secondary }]}>
-        <Text style={[styles.title, { color: currentTheme.text }]}>Settings</Text>
-        <Pressable onPress={onClose}>
-          <Icon style={[styles.closeIcon, { color: currentTheme.text }]} name="times-circle" />
-        </Pressable>
+    <View style={[S.container,{backgroundColor:T.background}]}>
+      <View style={[S.header1,{backgroundColor:T.background}]}/>
+      <View style={[S.header,{backgroundColor:T.secondary,borderBottomColor:T.primary+'44'}]}>
+        <Text style={[S.title,{color:T.text}]}>Settings</Text>
+        <Pressable onPress={onClose}><Icon name="times-circle" style={[S.closeIcon,{color:T.text}]}/></Pressable>
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Notification Settings */}
-        <View style={[styles.section, { backgroundColor: currentTheme.card }]}>
-          <Text style={[styles.sectionTitle, { color: currentTheme.primary }]}>Notifications</Text>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Icon style={[styles.settingIcon, { color: currentTheme.primary }]} name="bell" />
-              <View>
-                <Text style={[styles.settingLabel, { color: currentTheme.text }]}>Push Notifications</Text>
-                <Text style={[styles.settingDescription, { color: currentTheme.text }]}>Receive reminders and updates</Text>
-              </View>
-            </View>
-            <Switch
-              value={settings.notifications}
-              onValueChange={handleNotificationToggle}
-              trackColor={{ false: '#362c3a', true: currentTheme.primary }}
-              thumbColor={settings.notifications ? '#FFFFFF' : '#666666'}
-            />
+      <ScrollView style={S.content} showsVerticalScrollIndicator={false}>
+
+        {/* Theme Picker */}
+        <View style={[S.section,{backgroundColor:T.card}]}>
+          <Text style={[S.sTitle,{color:T.primary}]}>🎨 App Theme</Text>
+          <Text style={S.sSub}>Choose a colour palette that feels right for you</Text>
+          <View style={S.grid}>
+            {THEMES.map(t => {
+              const active = t.id === selectedTheme;
+              return (
+                <Pressable key={t.id} style={[S.themeCard,{backgroundColor:t.background,borderColor:active?t.primary:'#362c3a',borderWidth:active?2.5:1.5}]} onPress={()=>selectTheme(t.id)}>
+                  <View style={[S.previewBar,{backgroundColor:t.primary}]}/>
+                  <View style={[S.previewCardMini,{backgroundColor:t.card}]}>
+                    <View style={[S.previewAccent,{backgroundColor:t.accent}]}/>
+                  </View>
+                  <Text style={S.themeEmoji}>{t.emoji}</Text>
+                  <Text style={[S.themeName,{color:t.text}]} numberOfLines={1}>{t.name}</Text>
+                  <Text style={[S.themeDesc,{color:t.primary}]} numberOfLines={2}>{t.desc}</Text>
+                  {active && <View style={[S.check,{backgroundColor:t.primary}]}><Icon name="check" size={10} color="#fff"/></View>}
+                </Pressable>
+              );
+            })}
           </View>
 
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Icon style={[styles.settingIcon, { color: currentTheme.primary }]} name="volume-up" />
-              <View>
-                <Text style={[styles.settingLabel, { color: currentTheme.text }]}>Sound Effects</Text>
-                <Text style={[styles.settingDescription, { color: currentTheme.text }]}>Play sounds for actions</Text>
-              </View>
+          {/* Live preview */}
+          <View style={[S.preview,{backgroundColor:T.background,borderColor:T.primary+'55'}]}>
+            <Text style={[S.previewLbl,{color:T.primary}]}>Live Preview</Text>
+            <View style={[S.previewHdr,{backgroundColor:T.secondary}]}>
+              <Icon5 name="heartbeat" size={13} color={T.primary}/>
+              <Text style={[S.previewApp,{color:T.text}]}>FitLife</Text>
             </View>
-            <Switch
-              value={settings.soundEffects}
-              onValueChange={handleSoundToggle}
-              trackColor={{ false: '#362c3a', true: currentTheme.primary }}
-              thumbColor={settings.soundEffects ? '#FFFFFF' : '#666666'}
-            />
-          </View>
-
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Icon style={[styles.settingIcon, { color: currentTheme.primary }]} name="mobile" />
-              <View>
-                <Text style={[styles.settingLabel, { color: currentTheme.text }]}>Vibration</Text>
-                <Text style={[styles.settingDescription, { color: currentTheme.text }]}>Vibrate for notifications</Text>
-              </View>
+            <View style={S.previewRow}>
+              {[{l:'Calories',v:'1,850',c:T.primary},{l:'Burned',v:'320',c:T.accent},{l:'Goal',v:'2,000',c:'#4CAF50'}].map((s,i)=>(
+                <View key={i} style={[S.previewStat,{backgroundColor:T.card}]}>
+                  <Text style={[S.previewVal,{color:s.c}]}>{s.v}</Text>
+                  <Text style={S.previewStatLbl}>{s.l}</Text>
+                </View>
+              ))}
             </View>
-            <Switch
-              value={settings.vibration}
-              onValueChange={handleVibrationToggle}
-              trackColor={{ false: '#362c3a', true: currentTheme.primary }}
-              thumbColor={settings.vibration ? '#FFFFFF' : '#666666'}
-            />
+            <View style={[S.previewBtn,{backgroundColor:T.primary}]}>
+              <Text style={S.previewBtnTxt}>Add to Intake</Text>
+            </View>
           </View>
         </View>
 
-        {/* Security Settings */}
-        <View style={[styles.section, { backgroundColor: currentTheme.card }]}>
-          <Text style={[styles.sectionTitle, { color: currentTheme.primary }]}>Security</Text>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Icon style={[styles.settingIcon, { color: currentTheme.primary }]} name="lock" />
-              <View>
-                <Text style={[styles.settingLabel, { color: currentTheme.text }]}>Auto Lock</Text>
-                <Text style={[styles.settingDescription, { color: currentTheme.text }]}>Lock app when in background</Text>
+        {/* Notifications */}
+        <View style={[S.section,{backgroundColor:T.card}]}>
+          <Text style={[S.sTitle,{color:T.primary}]}>🔔 Notifications</Text>
+          {[
+            {key:'notifications' as keyof AppSettings, icon:'bell',    label:'Habit Reminders',      desc:'Live alerts when a habit alarm time is reached'},
+            {key:'cameraSound'   as keyof AppSettings, icon:'camera',  label:'Camera Capture Sound',  desc:'Shutter sound when capturing a food photo'},
+            {key:'vibration'     as keyof AppSettings, icon:'mobile',  label:'Vibration',             desc:'Vibrate on alerts and interactions'},
+          ].map(item=>(
+            <View key={item.key} style={S.settingRow}>
+              <View style={[S.settingIconCircle,{backgroundColor:T.primary+'22'}]}>
+                <Icon name={item.icon} size={17} color={T.primary}/>
               </View>
+              <View style={S.settingInfo}>
+                <Text style={[S.settingLabel,{color:T.text}]}>{item.label}</Text>
+                <Text style={S.settingDesc}>{item.desc}</Text>
+              </View>
+              <Switch value={!!settings[item.key]} onValueChange={()=>toggleSetting(item.key)}
+                trackColor={{false:'#2a2335',true:T.primary+'88'}} thumbColor={settings[item.key]?T.primary:'#555'}/>
             </View>
-            <Switch
-              value={settings.autoLock}
-              onValueChange={handleAutoLockToggle}
-              trackColor={{ false: '#362c3a', true: currentTheme.primary }}
-              thumbColor={settings.autoLock ? '#FFFFFF' : '#666666'}
-            />
+          ))}
+
+          {settings.notifications && (
+            <View style={[S.statusBox,{borderColor:reminders.length>0?T.primary+'44':'#444'}]}>
+              <Icon name={reminders.length>0?'bell':'bell-slash'} size={13} color={reminders.length>0?T.primary:'#555'}/>
+              <Text style={[S.statusTxt,{color:reminders.length>0?T.primary:'#555'}]}>
+                {reminders.length>0
+                  ? `${reminders.length} active habit${reminders.length>1?'s':''} monitored — alerts fire at alarm time`
+                  : 'No active reminders. Add habits in Reminders screen.'}
+              </Text>
+            </View>
+          )}
+
+          {settings.notifications && reminders.length>0 && (
+            <View style={{marginTop:10}}>
+              <Text style={[S.upcomingTitle,{color:T.primary}]}>Today's Alarms</Text>
+              {reminders.slice(0,4).map((r,i)=>(
+                <View key={i} style={S.alarmRow}>
+                  <Icon name="bell" size={13} color={T.accent}/>
+                  <Text style={[S.alarmTime,{color:T.accent}]}>{r.alarmTime}</Text>
+                  <Text style={S.alarmName} numberOfLines={1}>{r.name}</Text>
+                </View>
+              ))}
+              {reminders.length>4 && <Text style={S.alarmMore}>+{reminders.length-4} more habits</Text>}
+            </View>
+          )}
+        </View>
+
+        {/* About */}
+        <View style={[S.section,{backgroundColor:T.card}]}>
+          <Text style={[S.sTitle,{color:T.primary}]}>ℹ️ About FitLife</Text>
+          <View style={[S.creatorCard,{backgroundColor:T.background,borderColor:T.primary+'55'}]}>
+            <View style={[S.creatorAvatar,{backgroundColor:T.primary}]}>
+              <Icon5 name="user-alt" size={22} color="#fff"/>
+            </View>
+            <View style={{flex:1}}>
+              <Text style={S.creatorRole}>Created by</Text>
+              <Text style={[S.creatorName,{color:T.primary}]}>Christian Jay P. Mamaril</Text>
+              <Text style={S.creatorSub}>Developer & Designer</Text>
+            </View>
           </View>
 
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Icon style={[styles.settingIcon, { color: currentTheme.primary }]} name="fingerprint" />
-              <View>
-                <Text style={[styles.settingLabel, { color: currentTheme.text }]}>Biometric Authentication</Text>
-                <Text style={[styles.settingDescription, { color: currentTheme.text }]}>Use Face ID or fingerprint</Text>
-              </View>
+          {[
+            {icon:'heartbeat',   label:'App Name',     val:'FitLife'},
+            {icon:'code-branch', label:'Version',      val:'1.0.0'},
+            {icon:'calendar-alt',label:'Date Created', val:'January 2025'},
+            {icon:'mobile-alt',  label:'Platform',     val:'React Native (Expo)'},
+            {icon:'database',    label:'Backend',      val:'Supabase'},
+          ].map((item,i)=>(
+            <View key={i} style={S.aboutRow}>
+              <Icon5 name={item.icon} size={16} color={T.primary} style={S.aboutIcon}/>
+              <View><Text style={S.aboutLbl}>{item.label}</Text><Text style={[S.aboutVal,{color:T.text}]}>{item.val}</Text></View>
             </View>
-            <Switch
-              value={settings.biometricAuth}
-              onValueChange={handleBiometricToggle}
-              trackColor={{ false: '#362c3a', true: currentTheme.primary }}
-              thumbColor={settings.biometricAuth ? '#FFFFFF' : '#666666'}
-            />
+          ))}
+
+          <View style={[S.appDescBox,{backgroundColor:T.background}]}>
+            <Text style={[S.appDescTitle,{color:T.primary}]}>About this app</Text>
+            <Text style={S.appDesc}>
+              FitLife is a personal health companion built to help you track calories, log meals,
+              monitor exercise, build lasting habits, and visualise your weekly progress — all in one place.
+            </Text>
           </View>
         </View>
 
-        {/* About Section */}
-        <View style={[styles.section, { backgroundColor: currentTheme.card }]}>
-          <Text style={[styles.sectionTitle, { color: currentTheme.primary }]}>About</Text>
-          
-          <View style={styles.aboutItem}>
-            <Icon style={[styles.aboutIcon, { color: currentTheme.primary }]} name="info-circle" />
-            <View>
-              <Text style={[styles.aboutLabel, { color: currentTheme.text }]}>App Version</Text>
-              <Text style={[styles.aboutValue, { color: currentTheme.text }]}>1.0.0</Text>
-            </View>
-          </View>
-
-          <View style={styles.aboutItem}>
-            <Icon style={[styles.aboutIcon, { color: currentTheme.primary }]} name="code" />
-            <View>
-              <Text style={[styles.aboutLabel, { color: currentTheme.text }]}>Build Number</Text>
-              <Text style={[styles.aboutValue, { color: currentTheme.text }]}>2024.01.15</Text>
-            </View>
-          </View>
-
-          <Pressable style={styles.aboutButton}>
-            <Icon style={[styles.aboutButtonIcon, { color: currentTheme.primary }]} name="star" />
-            <Text style={[styles.aboutButtonText, { color: currentTheme.text }]}>Rate App</Text>
-          </Pressable>
-
-          <Pressable style={styles.aboutButton}>
-            <Icon style={[styles.aboutButtonIcon, { color: currentTheme.primary }]} name="question-circle" />
-            <Text style={[styles.aboutButtonText, { color: currentTheme.text }]}>Help & Support</Text>
-          </Pressable>
-
-          <Pressable style={styles.aboutButton}>
-            <Icon style={[styles.aboutButtonIcon, { color: currentTheme.primary }]} name="file-text" />
-            <Text style={[styles.aboutButtonText, { color: currentTheme.text }]}>Privacy Policy</Text>
-          </Pressable>
-        </View>
       </ScrollView>
 
-      {/* Countdown Modal */}
-      <CountdownModal
-        visible={showCountdownModal}
-        themeName={THEME_COLORS.find(t => t.id === pendingTheme)?.name || ''}
+      <CountdownModal visible={showCountdown}
+        themeName={THEMES.find(t=>t.id===pendingTheme)?.name||''}
         countdown={countdown}
-        onConfirm={handleConfirmTheme}
-        onCancel={handleRevertTheme}
-      />
+        primaryColor={THEMES.find(t=>t.id===pendingTheme)?.primary||'#c67ee2'}
+        onConfirm={confirmTheme} onCancel={revertTheme}/>
 
-      {/* Permission Modals */}
-      <PermissionModal
-        visible={showNotificationPermission}
-        title="Enable Push Notifications"
-        description="Allow MyFitnessJourney to send you push notifications for reminders and updates?"
-        iconName="bell"
-        onConfirm={confirmNotificationPermission}
-        onCancel={() => {
-          setShowNotificationPermission(false);
-          setPendingNotificationSetting(null);
-        }}
-      />
-
-      <PermissionModal
-        visible={showSoundPermission}
-        title="Enable Sound Effects"
-        description="Allow the app to play sound effects for actions and notifications?"
-        iconName="volume-up"
-        onConfirm={confirmSoundPermission}
-        onCancel={() => {
-          setShowSoundPermission(false);
-          setPendingSoundSetting(null);
-        }}
-      />
-
-      <PermissionModal
-        visible={showVibrationPermission}
-        title="Enable Vibration"
-        description="Allow the app to vibrate for notifications and feedback?"
-        iconName="mobile"
-        onConfirm={confirmVibrationPermission}
-        onCancel={() => {
-          setShowVibrationPermission(false);
-          setPendingVibrationSetting(null);
-        }}
-      />
-
-      {/* Verification Modals */}
-      <VerificationModal
-        visible={showAutoLockVerification}
-        title="Auto Lock Verification"
-        description="Enter your 4-digit PIN to enable auto lock"
-        iconName="lock"
-        onConfirm={confirmAutoLockVerification}
-        onCancel={() => {
-          setShowAutoLockVerification(false);
-          setPendingAutoLockSetting(null);
-        }}
-      />
-
-      <VerificationModal
-        visible={showBiometricVerification}
-        title="Biometric Authentication"
-        description="Verify your identity to enable biometric authentication"
-        iconName="fingerprint"
-        onConfirm={confirmBiometricVerification}
-        onCancel={() => {
-          setShowBiometricVerification(false);
-          setPendingBiometricSetting(null);
-        }}
-      />
+      {activeAlert && (
+        <HabitAlertModal visible={true}
+          habitName={activeAlert.name} benefits={activeAlert.benefits} alarmTime={activeAlert.alarmTime}
+          onDone={handleAlertDone} onDismiss={()=>setActiveAlert(null)}/>
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#15041f",
-    zIndex: 400,
-  },
-  header1: {
-    height: 35,
-    backgroundColor: "#15041f",
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: "#1e1929",
-    borderBottomWidth: 1,
-    borderBottomColor: "#362c3a",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  closeIcon: {
-    fontSize: 30,
-    color: "#FFFFFF",
-  },
-  content: {
-    flex: 1,
-    padding: 15,
-  },
-  section: {
-    backgroundColor: "#211c24",
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 15,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#c67ee2",
-    marginBottom: 5,
-  },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: "#CCCCCC",
-    marginBottom: 15,
-  },
-  previewSubtitle: {
-    fontSize: 14,
-    color: "#CCCCCC",
-    marginBottom: 10,
-  },
-  themeGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
-  themeCard: {
-    width: "30%",
-    backgroundColor: "#1e1929",
-    borderRadius: 12,
-    padding: 8,
-    marginBottom: 10,
-    borderWidth: 2,
-    alignItems: "center",
-  },
-  themeCardSelected: {
-    borderWidth: 2,
-  },
-  themePreview: {
-    width: "100%",
-    height: 40,
-    borderRadius: 6,
-    overflow: "hidden",
-    marginBottom: 6,
-  },
-  themePreviewTop: {
-    height: 12,
-  },
-  themePreviewCard: {
-    flex: 1,
-    margin: 3,
-    borderRadius: 3,
-  },
-  themeInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  themeColorDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: 5,
-  },
-  themeName: {
-    fontSize: 10,
-    color: "#FFFFFF",
-    fontWeight: "500",
-  },
-  themeCheckIcon: {
-    position: "absolute",
-    top: 3,
-    right: 3,
-    fontSize: 12,
-    color: "#4CAF50",
-  },
-  
-  // Enhanced Preview Styles
-  previewContainer: {
-    borderRadius: 12,
-    padding: 10,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: "#362c3a",
-  },
-  previewHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 8,
-    borderRadius: 6,
-    marginBottom: 8,
-  },
-  previewMenuIcon: {
-    padding: 4,
-  },
-  previewHeaderText: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  previewPlusIcon: {
-    padding: 4,
-  },
-  previewContent: {
-    gap: 8,
-  },
-  previewCard: {
-    padding: 12,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  previewCardTitle: {
-    fontSize: 14,
-    fontWeight: "bold",
-    marginBottom: 6,
-  },
-  previewPieContainer: {
-    flexDirection: "row",
-    height: 20,
-    width: '80%',
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginBottom: 6,
-  },
-  previewPieSegment: {
-    height: '100%',
-  },
-  previewCardValue: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  previewCardLabel: {
-    fontSize: 10,
-    color: "#888888",
-  },
-  previewStatsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  previewStatItem: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 8,
-    borderRadius: 6,
-    gap: 6,
-  },
-  previewStatText: {
-    fontSize: 10,
-    color: "#FFFFFF",
-  },
-  previewStatValue: {
-    fontSize: 10,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  previewButtons: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    marginTop: 4,
-  },
-  previewButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-  },
-  previewButtonText: {
-    fontSize: 10,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  
-  settingItem: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#362c3a",
-  },
-  settingLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  settingIcon: {
-    fontSize: 20,
-    color: "#c67ee2",
-    marginRight: 15,
-    width: 25,
-  },
-  settingLabel: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-    marginBottom: 2,
-  },
-  settingDescription: {
-    fontSize: 12,
-    color: "#888888",
-  },
-  aboutItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#362c3a",
-  },
-  aboutIcon: {
-    fontSize: 20,
-    color: "#c67ee2",
-    marginRight: 15,
-    width: 25,
-  },
-  aboutLabel: {
-    fontSize: 14,
-    color: "#CCCCCC",
-    marginBottom: 2,
-  },
-  aboutValue: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  aboutButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#362c3a",
-  },
-  aboutButtonIcon: {
-    fontSize: 20,
-    color: "#c67ee2",
-    marginRight: 15,
-    width: 25,
-  },
-  aboutButtonText: {
-    fontSize: 16,
-    color: "#FFFFFF",
-  },
-
-  // Countdown Modal Styles
-  countdownModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  countdownModalContent: {
-    backgroundColor: "#211c24",
-    borderRadius: 20,
-    padding: 25,
-    width: "85%",
-    alignItems: "center",
-  },
-  countdownIcon: {
-    fontSize: 50,
-    color: "#c67ee2",
-    marginBottom: 15,
-  },
-  countdownTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-    marginBottom: 5,
-  },
-  countdownThemeName: {
-    fontSize: 18,
-    color: "#c67ee2",
-    marginBottom: 20,
-  },
-  countdownCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#362c3a",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 15,
-    borderWidth: 3,
-    borderColor: "#c67ee2",
-  },
-  countdownNumber: {
-    fontSize: 36,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  countdownText: {
-    fontSize: 14,
-    color: "#888888",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  countdownButtons: {
-    flexDirection: "row",
-    gap: 15,
-  },
-  countdownConfirmButton: {
-    flexDirection: "row",
-    backgroundColor: "#4CAF50",
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 10,
-    alignItems: "center",
-    gap: 8,
-  },
-  countdownCancelButton: {
-    flexDirection: "row",
-    backgroundColor: "#f44336",
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 10,
-    alignItems: "center",
-    gap: 8,
-  },
-  countdownButtonIcon: {
-    fontSize: 18,
-    color: "#FFFFFF",
-  },
-  countdownConfirmText: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  countdownCancelText: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-
-  // Permission Modal Styles
-  permissionModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  permissionModalContent: {
-    backgroundColor: "#211c24",
-    borderRadius: 20,
-    padding: 25,
-    width: "85%",
-    alignItems: "center",
-  },
-  permissionIcon: {
-    fontSize: 60,
-    color: "#2196F3",
-    marginBottom: 15,
-  },
-  permissionTitle: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-    marginBottom: 10,
-    textAlign: "center",
-  },
-  permissionDescription: {
-    fontSize: 16,
-    color: "#CCCCCC",
-    textAlign: "center",
-    marginBottom: 25,
-    lineHeight: 22,
-  },
-  permissionButtons: {
-    flexDirection: "row",
-    gap: 15,
-    width: "100%",
-  },
-  permissionAllowButton: {
-    flex: 1,
-    flexDirection: "row",
-    backgroundColor: "#4CAF50",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  permissionDenyButton: {
-    flex: 1,
-    flexDirection: "row",
-    backgroundColor: "#666666",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  permissionButtonIcon: {
-    fontSize: 18,
-    color: "#FFFFFF",
-  },
-  permissionAllowText: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  permissionDenyText: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-
-  // Verification Modal Styles
-  verificationModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  verificationModalContent: {
-    backgroundColor: "#211c24",
-    borderRadius: 20,
-    padding: 25,
-    width: "85%",
-    alignItems: "center",
-  },
-  verificationIcon: {
-    fontSize: 50,
-    color: "#c67ee2",
-    marginBottom: 15,
-  },
-  verificationTitle: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-    marginBottom: 5,
-  },
-  verificationDescription: {
-    fontSize: 14,
-    color: "#888888",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  pinDotsContainer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 15,
-    marginBottom: 20,
-  },
-  pinDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: "#c67ee2",
-    backgroundColor: "transparent",
-  },
-  pinDotFilled: {
-    backgroundColor: "#c67ee2",
-  },
-  verifyingText: {
-    fontSize: 16,
-    color: "#c67ee2",
-    marginBottom: 20,
-  },
-  numberPad: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-    width: "100%",
-    maxWidth: 220,
-    gap: 8,
-    marginBottom: 20,
-  },
-  numberPadButton: {
-    width: 60,
-    height: 50,
-    borderRadius: 10,
-    backgroundColor: "#362c3a",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  numberPadButtonEmpty: {
-    backgroundColor: "transparent",
-  },
-  numberPadText: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
-  numberPadIcon: {
-    fontSize: 20,
-    color: "#FFFFFF",
-  },
-  verificationButtons: {
-    width: "100%",
-  },
-  verificationCancelButton: {
-    backgroundColor: "#666666",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  verificationCancelText: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFFFFF",
-  },
+const S = StyleSheet.create({
+  container:{position:'absolute',top:0,left:0,right:0,bottom:0,zIndex:400},
+  header1:{height:35},
+  header:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',paddingHorizontal:20,paddingVertical:15,borderBottomWidth:1},
+  title:{fontSize:24,fontWeight:'bold',color:'#fff'},
+  closeIcon:{fontSize:30,color:'#fff'},
+  content:{flex:1,padding:15},
+  section:{borderRadius:16,padding:16,marginBottom:15},
+  sTitle:{fontSize:17,fontWeight:'800',marginBottom:4},
+  sSub:{fontSize:12,color:'#666',marginBottom:14},
+  grid:{flexDirection:'row',flexWrap:'wrap',gap:10,marginBottom:16},
+  themeCard:{width:'47%',borderRadius:14,padding:10,gap:4,overflow:'hidden',position:'relative'},
+  previewBar:{height:6,borderRadius:3,marginBottom:4},
+  previewCardMini:{height:28,borderRadius:6,padding:4,justifyContent:'flex-end'},
+  previewAccent:{height:6,width:'60%',borderRadius:3},
+  themeEmoji:{fontSize:20,marginTop:4},
+  themeName:{fontSize:13,fontWeight:'700'},
+  themeDesc:{fontSize:10,lineHeight:13},
+  check:{position:'absolute',top:8,right:8,width:20,height:20,borderRadius:10,alignItems:'center',justifyContent:'center'},
+  preview:{borderRadius:12,padding:12,borderWidth:1,gap:8,marginTop:4},
+  previewLbl:{fontSize:11,fontWeight:'700',textTransform:'uppercase',letterSpacing:0.5},
+  previewHdr:{flexDirection:'row',alignItems:'center',gap:8,padding:8,borderRadius:8},
+  previewApp:{fontSize:13,fontWeight:'700'},
+  previewRow:{flexDirection:'row',gap:8},
+  previewStat:{flex:1,borderRadius:10,padding:10,alignItems:'center',gap:2},
+  previewVal:{fontSize:15,fontWeight:'800'},
+  previewStatLbl:{fontSize:9,color:'#888'},
+  previewBtn:{borderRadius:10,paddingVertical:9,alignItems:'center'},
+  previewBtnTxt:{fontSize:13,fontWeight:'700',color:'#fff'},
+  settingRow:{flexDirection:'row',alignItems:'center',paddingVertical:12,gap:12,borderBottomWidth:1,borderBottomColor:'#2a2335'},
+  settingIconCircle:{width:36,height:36,borderRadius:10,alignItems:'center',justifyContent:'center'},
+  settingInfo:{flex:1},
+  settingLabel:{fontSize:15,fontWeight:'700'},
+  settingDesc:{fontSize:11,color:'#666',marginTop:1},
+  statusBox:{flexDirection:'row',alignItems:'center',gap:8,marginTop:10,padding:10,borderRadius:10,borderWidth:1,backgroundColor:'rgba(0,0,0,0.2)'},
+  statusTxt:{fontSize:12,fontWeight:'600',flex:1},
+  upcomingTitle:{fontSize:12,fontWeight:'700',marginBottom:6,textTransform:'uppercase',letterSpacing:0.4},
+  alarmRow:{flexDirection:'row',alignItems:'center',gap:10,paddingVertical:8,borderBottomWidth:1,borderBottomColor:'#362c3a'},
+  alarmTime:{fontSize:13,fontWeight:'700',width:72},
+  alarmName:{fontSize:13,color:'#ccc',flex:1},
+  alarmMore:{fontSize:11,color:'#555',fontStyle:'italic',marginTop:4},
+  creatorCard:{flexDirection:'row',alignItems:'center',gap:14,padding:14,borderRadius:14,borderWidth:1,marginBottom:14},
+  creatorAvatar:{width:52,height:52,borderRadius:26,alignItems:'center',justifyContent:'center'},
+  creatorRole:{fontSize:11,color:'#666'},
+  creatorName:{fontSize:16,fontWeight:'800'},
+  creatorSub:{fontSize:12,color:'#888'},
+  aboutRow:{flexDirection:'row',alignItems:'center',paddingVertical:11,borderBottomWidth:1,borderBottomColor:'#2a2335',gap:14},
+  aboutIcon:{width:22},
+  aboutLbl:{fontSize:11,color:'#666'},
+  aboutVal:{fontSize:14,fontWeight:'700'},
+  appDescBox:{borderRadius:12,padding:14,marginTop:10},
+  appDescTitle:{fontSize:12,fontWeight:'700',textTransform:'uppercase',letterSpacing:0.4,marginBottom:6},
+  appDesc:{fontSize:13,color:'#888',lineHeight:20},
 });
-

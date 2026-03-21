@@ -568,7 +568,7 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUserSession(session);
-      if (session?.user?.id) fetchUserProfile(session.user.id);
+      if (session?.user?.id) { fetchUserProfile(session.user.id); fetchReminders(session.user.id); }
       console.log('🔑 Initial session:', session?.user?.id || 'NO USER');
     });
 
@@ -576,7 +576,7 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserSession(session);
-      if (session?.user?.id) fetchUserProfile(session.user.id);
+      if (session?.user?.id) { fetchUserProfile(session.user.id); fetchReminders(session.user.id); }
       else setUserProfileData(null);
       console.log('🔄 Auth change:', session?.user?.id || 'NO USER');
     });
@@ -1082,6 +1082,35 @@ const handleToggleItem = async (itemId: string) => {
   // Reminders state - shared with RemindersScreen
   const [reminders, setReminders] = useState<HabitReminder[]>(INITIAL_REMINDERS);
 
+  // Fetch reminders from Supabase on mount
+  const fetchReminders = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('user_reminders')
+        .select('id, name, benefits, alarm_time, date, repeat, is_active, total_done, total_undone')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error || !data || data.length === 0) return;
+
+      const mapped: HabitReminder[] = data.map((r: any) => ({
+        id: r.id,
+        name: r.name ?? 'Habit',
+        benefits: r.benefits ?? '',
+        alarmTime: r.alarm_time ?? '08:00',
+        date: r.date ?? new Date().toISOString().split('T')[0],
+        repeat: r.repeat ?? 'Daily',
+        isActive: r.is_active ?? true,
+        isDone: false,
+        totalDone: r.total_done ?? 0,
+        totalUndone: r.total_undone ?? 0,
+      }));
+      setReminders(mapped);
+    } catch (e) {
+      console.warn('fetchReminders error:', e);
+    }
+  };
+
   // Screen navigation state
   const [showProfileScreen, setShowProfileScreen] = useState(false);
   const [showWeeklyReportScreen, setShowWeeklyReportScreen] = useState(false);
@@ -1234,10 +1263,14 @@ const handleCreateHabit = async () => {
     // Format time for display (12-hour format)
     const formattedTime = formatTimeForDisplay(reminderTime);
 
-    // Find habit_id by name (no auth needed)
+    // Get current user_id
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id ?? null;
+
+    // Find habit_id by name
     const { data: habit, error: habitError } = await supabase
       .from('habits')
-      .select('id')
+      .select('id, name, benefits')
       .eq('name', selectedHabit.name)
       .single();
 
@@ -1246,23 +1279,43 @@ const handleCreateHabit = async () => {
       return;
     }
 
-    // Insert reminder without user_id (public)
-    const { error } = await supabase
+    // Insert reminder with user_id
+    const { data: newReminder, error } = await supabase
       .from('user_reminders')
       .insert({
+        user_id: userId,
         habit_id: habit.id,
+        name: habit.name,
+        benefits: habit.benefits ?? selectedHabit.benefits ?? '',
         alarm_time: reminderTime,
         date: reminderDate,
         repeat: repeatOption,
         is_active: true,
         total_done: 0,
         total_undone: 0,
-      });
+      })
+      .select()
+      .single();
 
     if (error) {
       Alert.alert('Error', error.message);
       return;
     }
+
+    // Add to reminders state so RemindersScreen reflects it immediately
+    const newHabitReminder: HabitReminder = {
+      id: newReminder?.id ?? Date.now(),
+      name: habit.name,
+      benefits: habit.benefits ?? selectedHabit.benefits ?? '',
+      alarmTime: formattedTime,
+      date: reminderDate,
+      repeat: repeatOption,
+      isActive: true,
+      isDone: false,
+      totalDone: 0,
+      totalUndone: 0,
+    };
+    setReminders(prev => [newHabitReminder, ...prev]);
 
     setIsNotificationModalVisible(false);
     setSelectedHabit(null);
@@ -1270,7 +1323,7 @@ const handleCreateHabit = async () => {
     setReminderDate(new Date().toISOString().split('T')[0]);
     setRepeatOption('Daily');
 
-    Alert.alert('Success', `Habit "${selectedHabit.name}" added to Supabase!`);
+    Alert.alert('Success', `Habit "${selectedHabit.name}" added!`);
   };
 
   const hasProgress = foodValue > 0 || exerciseValue > 0;

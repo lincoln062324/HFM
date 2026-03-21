@@ -87,7 +87,7 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
     recipeFavorites: [] as { recipe_name: string; recipe_category: string }[],
     mealFavorites: [] as { meal_name: string; meal_category: string }[],
     foodFavorites: [] as { food_name: string; food_category: string }[],
-    reminders: [] as { name: string; alarmTime: string; isActive: boolean; totalDone: number }[],
+    reminders: [] as { name: string; alarmTime: string; isActive: boolean; totalDone: number; repeat?: string }[],
     totalCaloriesLogged: 0,
     goalReachedToday: false,
   });
@@ -162,8 +162,10 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
             .order('created_at', { ascending: false })),
           // Reminders
           userId
-            ? supabase.from('user_reminders').select('name, alarmTime, isActive, totalDone')
-                .eq('user_id', userId).order('created_at', { ascending: false })
+            ? supabase.from('user_reminders')
+                .select('name, benefits, alarm_time, is_active, total_done, repeat')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false })
             : Promise.resolve({ data: [], error: null }),
         ]);
 
@@ -180,7 +182,13 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         recipeFavorites: recipeFavRes.data ?? [],
         mealFavorites: mealFavRes.data ?? [],
         foodFavorites: foodFavRes.data ?? [],
-        reminders: remindersRes.data ?? [],
+        reminders: (remindersRes.data ?? []).map((r: any) => ({
+          name: r.name ?? 'Habit',
+          alarmTime: r.alarm_time ?? '—',
+          isActive: r.is_active ?? true,
+          totalDone: r.total_done ?? 0,
+          repeat: r.repeat ?? '',
+        })),
         totalCaloriesLogged: (parseInt(food ?? '0')) + (parseInt(exercise ?? '0')),
         goalReachedToday: goalFlag === 'true',
       });
@@ -711,7 +719,7 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
                   <View style={[styles.reminderDot, { backgroundColor: r.isActive ? '#4CAF50' : '#555' }]} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.reminderName}>{r.name}</Text>
-                    <Text style={styles.reminderMeta}>{r.alarmTime} · {r.totalDone ?? 0}× completed</Text>
+                    <Text style={styles.reminderMeta}>{r.alarmTime}{r.repeat ? ` · ${r.repeat}` : ''} · {r.totalDone ?? 0}× completed</Text>
                   </View>
                   <View style={[styles.reminderBadge, { backgroundColor: r.isActive ? 'rgba(76,175,80,0.15)' : 'rgba(100,100,100,0.15)' }]}>
                     <Text style={[styles.reminderBadgeText, { color: r.isActive ? '#4CAF50' : '#888' }]}>
