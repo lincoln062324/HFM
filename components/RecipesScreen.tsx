@@ -80,6 +80,7 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
   const [recipeFavoritesIds, setRecipeFavoritesIds] = useState<Set<string>>(new Set());
   const [mealFavoritesIds, setMealFavoritesIds] = useState<Set<string>>(new Set());
   const [foodFavoritesIds, setFoodFavoritesIds] = useState<Set<string>>(new Set());
+  const [pendingItems, setPendingItems] = useState<{name: string; calories: number; category: string; type: string}[]>([]);
 
   // Fetch recipes from Supabase
   useEffect(() => {
@@ -357,16 +358,59 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
     setShowIntakeBar(false);
   };
 
-  const addCalories = (calories: number, itemName: string = 'Food item') => {
+  const addCalories = (calories: number, itemName: string = 'Food item', category: string = '', type: string = 'food') => {
     setSelectedCalories(prev => prev + calories);
     setShowIntakeBar(true);
+    setPendingItems(prev => [...prev, { name: itemName, calories, category, type }]);
     Alert.alert('Calorie has been added', `${itemName} (${calories} kcal)`);
   };
 
-  const addToIntake = () => {
+  const addToIntake = async () => {
     if (onFoodAdded && selectedCalories > 0) {
       onFoodAdded(selectedCalories);
+
+      // Log each item to daily_activity_logs
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id ?? null;
+        const today = new Date().toISOString().split('T')[0];
+
+        const logEntries = pendingItems.map(item => ({
+          user_id: userId,
+          log_date: today,
+          activity_type: 'food',
+          item_name: item.name,
+          item_category: item.category || item.type,
+          calories: item.calories,
+          logged_at: new Date().toISOString(),
+        }));
+
+        if (logEntries.length > 0) {
+          await supabase.from('daily_activity_logs').insert(logEntries);
+        }
+
+        // Upsert today's calorie total in goal_logs
+        const { data: existing } = await supabase
+          .from('goal_logs')
+          .select('calories_consumed')
+          .eq('log_date', today)
+          .eq('user_id', userId)
+          .single();
+
+        const prev = existing?.calories_consumed ?? 0;
+        await supabase.from('goal_logs').upsert({
+          user_id: userId,
+          log_date: today,
+          calories_consumed: prev + selectedCalories,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,log_date' });
+
+      } catch (e: any) {
+        console.warn('Food log error:', e?.message);
+      }
+
       Alert.alert('Added to Food Calories', `${selectedCalories} kcal added to your daily food total!`);
+      setPendingItems([]);
       resetSelection();
     }
   };
@@ -516,7 +560,7 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
                   <Pressable onPress={() => toggleRecipeFavorite(recipe.id)}>
                     <Icon2 style={[styles.favIcon, isRecipeFavorite(recipe.id) && styles.favIconActive]} name={isRecipeFavorite(recipe.id) ? "heart" : "heart-outline"} />
                   </Pressable>
-                  <Pressable style={styles.addCalButton} onPress={() => addCalories(recipe.calories, recipe.name)}>
+                  <Pressable style={styles.addCalButton} onPress={() => addCalories(recipe.calories, recipe.name, recipe.category, 'recipe')}>
                     <Icon name="plus" size={18} color="#4CAF50" />
                   </Pressable>
                   <Icon style={styles.expandIcon} name={expandedRecipe === recipe.id ? 'chevron-up' : 'chevron-down'} />
@@ -571,7 +615,7 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
                   <Pressable onPress={() => toggleMealFavorite(meal.id)}>
                     <Icon2 style={[styles.favIcon, isMealFavorite(meal.id) && styles.favIconActive]} name={isMealFavorite(meal.id) ? "heart" : "heart-outline"} />
                   </Pressable>
-                  <Pressable style={styles.addCalButton} onPress={() => addCalories(meal.calories, meal.name)}>
+                  <Pressable style={styles.addCalButton} onPress={() => addCalories(meal.calories, meal.name, meal.category, 'meal')}>
                     <Icon name="plus" size={18} color="#4CAF50" />
                   </Pressable>
                   <Icon style={styles.expandIcon} name={expandedMeal === meal.id ? 'chevron-up' : 'chevron-down'} />
@@ -622,7 +666,7 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
                   <Pressable onPress={() => toggleFoodFavorite(food.id)}>
                     <Icon2 style={[styles.favIcon, isFoodFavorite(food.id) && styles.favIconActive]} name={isFoodFavorite(food.id) ? "heart" : "heart-outline"} />
                   </Pressable>
-                  <Pressable style={styles.addCalButton} onPress={() => addCalories(food.calories, food.name)}>
+                  <Pressable style={styles.addCalButton} onPress={() => addCalories(food.calories, food.name, food.category, 'food')}>
                     <Icon name="plus" size={18} color="#4CAF50" />
                   </Pressable>
                   <Icon style={styles.expandIcon} name={expandedFood === food.id ? 'chevron-up' : 'chevron-down'} />

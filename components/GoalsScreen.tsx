@@ -75,6 +75,7 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
     carbs: 0, protein: 0, fat: 0, fiber: 0,
     carbsTarget: 500, proteinTarget: 150, fatTarget: 80, fiberTarget: 30,
     weekLogs: [] as { date: string; calories: number }[],
+    foodItems: [] as { name: string; category: string; calories: number; count: number }[],
   });
 
   // ── Exercise (from exercise favorites/logs) ───────────────────────────────
@@ -82,7 +83,7 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
     dailyTarget: 300,
     weeklyBurned: 0,
     avgDaily: 0,
-    activities: [] as { name: string; category: string; count: number }[],
+    activities: [] as { name: string; category: string; calories: number; count: number }[],
     editingTarget: false,
     tempTarget: '300',
   });
@@ -101,7 +102,7 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id ?? null;
 
-      // AsyncStorage basics
+      // AsyncStorage basics (for today's running totals)
       const [goalStr, foodStr, exStr] = await Promise.all([
         AsyncStorage.getItem('@dailyCalorieGoal'),
         AsyncStorage.getItem('@foodValue'),
@@ -117,7 +118,7 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
 
       if (!userId) { setLoading(false); return; }
 
-      // ── Fetch user_profiles ──────────────────────────────────────────────
+      // ── user_profiles ────────────────────────────────────────────────────
       const { data: prof } = await supabase
         .from('user_profiles')
         .select('weight_kg, target_weight_kg, goals, daily_calorie_goal')
@@ -135,75 +136,111 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
         }
       }
 
-      // ── Fetch goal_logs for food/exercise/consistency ────────────────────
+      const calorieGoal = prof?.daily_calorie_goal ?? goal;
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const { data: logs } = await supabase
-        .from('goal_logs')
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const today = new Date().toISOString().split('T')[0];
+
+      // ── daily_activity_logs — actual food/exercise items logged ──────────
+      const { data: actLogs } = await supabase
+        .from('daily_activity_logs')
         .select('*')
         .eq('user_id', userId)
         .gte('log_date', thirtyDaysAgo)
-        .order('log_date', { ascending: false });
+        .order('logged_at', { ascending: false });
 
-      if (logs && logs.length > 0) {
-        // Food stats from logs
-        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        const weekLogs = logs.filter((l: any) => l.log_date >= weekAgo);
-        const weeklyFood = weekLogs.reduce((s: number, l: any) => s + (l.calories_consumed ?? 0), 0);
-        const avgDaily   = weekLogs.length > 0 ? Math.round(weeklyFood / weekLogs.length) : 0;
-        const latestLog  = logs[0];
+      if (actLogs && actLogs.length > 0) {
+        // ── Food intake from actual logged items ────────────────────────
+        const foodLogs = actLogs.filter((l: any) => l.activity_type === 'food');
+        const weekFoodLogs = foodLogs.filter((l: any) => l.log_date >= weekAgo);
+        const weeklyFoodCal = weekFoodLogs.reduce((s: number, l: any) => s + (l.calories ?? 0), 0);
+        const foodDays = [...new Set(weekFoodLogs.map((l: any) => l.log_date))].length;
+        const avgDailyFood = foodDays > 0 ? Math.round(weeklyFoodCal / foodDays) : 0;
+
+        // Today's food items for nutritional estimates (use calories as proxy)
+        const todayFoodLogs = foodLogs.filter((l: any) => l.log_date === today);
+        const todayFoodCal = todayFoodLogs.reduce((s: number, l: any) => s + (l.calories ?? 0), 0);
+        // Estimate macros from calories (standard ratios if no breakdown stored)
+        const carbsEst    = Math.round(todayFoodCal * 0.50 / 4);   // 50% carbs, 4kcal/g
+        const proteinEst  = Math.round(todayFoodCal * 0.25 / 4);   // 25% protein
+        const fatEst      = Math.round(todayFoodCal * 0.20 / 9);   // 20% fat, 9kcal/g
+        const fiberEst    = Math.round(todayFoodCal * 0.05 / 2);   // 5% fiber
+
+        // Build food items list for display
+        const foodItemCounts: Record<string, {name: string; category: string; calories: number; count: number}> = {};
+        weekFoodLogs.forEach((l: any) => {
+          const k = l.item_name ?? 'Unknown';
+          if (!foodItemCounts[k]) foodItemCounts[k] = { name: k, category: l.item_category ?? '', calories: l.calories ?? 0, count: 0 };
+          foodItemCounts[k].count++;
+        });
 
         setFoodStats(prev => ({
           ...prev,
-          weeklyTotal: weeklyFood,
-          avgDaily,
-          weekLogs: weekLogs.map((l: any) => ({ date: l.log_date, calories: l.calories_consumed ?? 0 })),
-          carbs:   latestLog?.carbs_g   ?? 0,
-          protein: latestLog?.protein_g ?? 0,
-          fat:     latestLog?.fat_g     ?? 0,
-          fiber:   latestLog?.fiber_g   ?? 0,
+          weeklyTotal: weeklyFoodCal,
+          avgDaily: avgDailyFood,
+          carbs: carbsEst,
+          protein: proteinEst,
+          fat: fatEst,
+          fiber: fiberEst,
+          foodItems: Object.values(foodItemCounts).sort((a, b) => b.count - a.count),
         }));
 
-        // Exercise stats
-        const weeklyEx = weekLogs.reduce((s: number, l: any) => s + (l.calories_burned ?? 0), 0);
+        // ── Exercise from actual logged items ───────────────────────────
+        const exLogs = actLogs.filter((l: any) => l.activity_type === 'exercise');
+        const weekExLogs = exLogs.filter((l: any) => l.log_date >= weekAgo);
+        const weeklyExCal = weekExLogs.reduce((s: number, l: any) => s + (l.calories ?? 0), 0);
+        const exDays = [...new Set(weekExLogs.map((l: any) => l.log_date))].length;
+        const avgDailyEx = exDays > 0 ? Math.round(weeklyExCal / exDays) : 0;
+
+        // Group exercises by name for activity breakdown
+        const exItemCounts: Record<string, {name: string; category: string; calories: number; count: number}> = {};
+        weekExLogs.forEach((l: any) => {
+          const k = l.item_name ?? 'Unknown';
+          if (!exItemCounts[k]) exItemCounts[k] = { name: k, category: l.item_category ?? '', calories: l.calories ?? 0, count: 0 };
+          exItemCounts[k].count++;
+          exItemCounts[k].calories += l.calories ?? 0;
+        });
+
         setExerciseStats(prev => ({
           ...prev,
-          weeklyBurned: weeklyEx,
-          avgDaily: weekLogs.length > 0 ? Math.round(weeklyEx / weekLogs.length) : 0,
+          weeklyBurned: weeklyExCal,
+          avgDaily: avgDailyEx,
+          activities: Object.values(exItemCounts).sort((a, b) => b.calories - a.calories),
         }));
+      }
 
-        // Consistency — last 7 days
+      // ── Consistency from user_session_logs (login days) ──────────────────
+      const { data: sessionLogs } = await supabase
+        .from('user_session_logs')
+        .select('login_date')
+        .eq('user_id', userId)
+        .gte('login_date', thirtyDaysAgo)
+        .order('login_date', { ascending: false });
+
+      if (sessionLogs) {
+        const loginDates = [...new Set(sessionLogs.map((s: any) => s.login_date))] as string[];
+
+        // Last 7 days
         const last7 = Array.from({ length: 7 }, (_, i) => {
-          const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-          const log = logs.find((l: any) => l.log_date === d);
-          return log ? (log.calories_consumed ?? 0) >= (prof?.daily_calorie_goal ?? goal) * 0.8 : false;
-        }).reverse();
+          const d = new Date(Date.now() - (6 - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          return loginDates.includes(d);
+        });
 
         const daysThisWeek  = last7.filter(Boolean).length;
-        const last30 = logs.filter((l: any) => l.log_date >= thirtyDaysAgo);
-        const daysThisMonth = last30.filter((l: any) => (l.calories_consumed ?? 0) >= (prof?.daily_calorie_goal ?? goal) * 0.8).length;
+        const daysThisMonth = loginDates.filter(d => d >= thirtyDaysAgo).length;
+
+        // Streak: count consecutive login days backward from today
+        let streak = 0;
+        for (let i = 0; i < 30; i++) {
+          const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          if (loginDates.includes(d)) { streak++; } else break;
+        }
 
         setConsistency({
-          daily:   { achieved: last7[6], streak: calcStreak(logs, prof?.daily_calorie_goal ?? goal) },
+          daily:   { achieved: loginDates.includes(today), streak },
           weekly:  { days: daysThisWeek, total: 7, logs: last7 },
           monthly: { days: daysThisMonth, total: 30, percentage: Math.round((daysThisMonth / 30) * 100) },
         });
-      }
-
-      // ── Exercise favorites for activity breakdown ────────────────────────
-      const { data: exFavs } = await supabase
-        .from('user_favorites_exercise')
-        .select('exercise_name, exercise_category')
-        .eq('user_id', userId)
-        .limit(10);
-
-      if (exFavs) {
-        const grouped: Record<string, { name: string; category: string; count: number }> = {};
-        exFavs.forEach((e: any) => {
-          const key = e.exercise_name ?? 'Unknown';
-          if (!grouped[key]) grouped[key] = { name: key, category: e.exercise_category ?? '', count: 0 };
-          grouped[key].count++;
-        });
-        setExerciseStats(prev => ({ ...prev, activities: Object.values(grouped) }));
       }
 
     } catch (err: any) {
@@ -581,6 +618,31 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
               </View>
             </View>
           )}
+
+          {/* Food items logged this week */}
+          {foodStats.foodItems.length > 0 && (
+            <>
+              <Text style={styles.subTitle}>Items Logged This Week</Text>
+              {foodStats.foodItems.slice(0, 6).map((item, i) => (
+                <View key={i} style={styles.actRow}>
+                  <Icon5 name="utensils" size={14} color="#84d7f4" />
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.actName}>{item.name}</Text>
+                    <Text style={styles.actCat}>{item.category} · {item.count}× logged</Text>
+                  </View>
+                  <View style={[styles.actBadge, { backgroundColor: 'rgba(132,215,244,0.15)' }]}>
+                    <Text style={[styles.actBadgeText, { color: '#84d7f4' }]}>{item.calories} kcal</Text>
+                  </View>
+                </View>
+              ))}
+              {foodStats.foodItems.length > 6 && (
+                <Text style={styles.moreHint}>+{foodStats.foodItems.length - 6} more items this week</Text>
+              )}
+            </>
+          )}
+          {foodStats.foodItems.length === 0 && (
+            <Text style={styles.emptyHint}>Add recipes, meals or foods to see them tracked here.</Text>
+          )}
         </View>
 
         {/* ── Exercise ─────────────────────────────────────────────────────── */}
@@ -626,23 +688,28 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
             Avg {Math.round((exerciseStats.avgDaily / exerciseStats.dailyTarget) * 100)}% of daily target
           </Text>
 
-          {/* Activity breakdown */}
-          {exerciseStats.activities.length > 0 && (
+          {/* Activity breakdown from actual logged exercises */}
+          {exerciseStats.activities.length > 0 ? (
             <>
-              <Text style={styles.subTitle}>Activity Breakdown</Text>
+              <Text style={styles.subTitle}>Activity Breakdown This Week</Text>
               {exerciseStats.activities.slice(0, 5).map((a, i) => (
                 <View key={i} style={styles.actRow}>
                   <Icon5 name="dumbbell" size={16} color="#fcd2c7" />
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text style={styles.actName}>{a.name}</Text>
-                    <Text style={styles.actCat}>{a.category}</Text>
+                    <Text style={styles.actCat}>{a.category} · {a.count}× logged</Text>
                   </View>
                   <View style={styles.actBadge}>
-                    <Text style={styles.actBadgeText}>{a.count}× saved</Text>
+                    <Text style={styles.actBadgeText}>{a.calories} kcal</Text>
                   </View>
                 </View>
               ))}
+              {exerciseStats.activities.length > 5 && (
+                <Text style={styles.moreHint}>+{exerciseStats.activities.length - 5} more exercises</Text>
+              )}
             </>
+          ) : (
+            <Text style={styles.emptyHint}>Add exercises from ExerciseScreen to see breakdown here.</Text>
           )}
         </View>
 
@@ -801,6 +868,20 @@ const styles = StyleSheet.create({
   goalPickerText: { fontSize: 13, fontWeight: '600', color: '#888', textAlign: 'center' },
   checkIcon: { position: 'absolute', top: 6, right: 6 },
 
+  moreHint: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 6,
+  },
+  emptyHint: {
+    fontSize: 13,
+    color: '#555',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 10,
+  },
   // Legacy (keep for ProgressBar component)
   progressBarBg: { height: 12, backgroundColor: '#362c3a', borderRadius: 6, overflow: 'hidden' },
   progressBarFill: { height: '100%', borderRadius: 6 },

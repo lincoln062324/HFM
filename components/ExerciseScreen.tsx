@@ -46,6 +46,7 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
   const [expandedExercise, setExpandedExercise] = useState<string | null>(null);
   const [showFavorites, setShowFavorites] = useState(false);
   const [userFavoritesIds, setUserFavoritesIds] = useState<Set<string>>(new Set());
+  const [pendingExercises, setPendingExercises] = useState<{name: string; calories: number; category: string}[]>([]);
 
   // Fetch exercises from Supabase
   useEffect(() => {
@@ -123,11 +124,13 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
     loadAllFavorites();
   }, []);
 
-  const addCalories = (calories: number) => {
-    const exerciseName = exercises.find(ex => ex.estimatedCalories === calories)?.name || 'Exercise';
+  const addCalories = (calories: number, exerciseName?: string, exerciseCategory?: string) => {
+    const name = exerciseName || exercises.find(ex => ex.estimatedCalories === calories)?.name || 'Exercise';
+    const category = exerciseCategory || exercises.find(ex => ex.estimatedCalories === calories)?.category || '';
     setSelectedCalories(prev => prev + calories);
     setShowIntakeBar(true);
-    Alert.alert('Exercise Added', `${exerciseName} (${calories} kcal) has been added to your count!`);
+    setPendingExercises(prev => [...prev, { name, calories, category }]);
+    Alert.alert('Exercise Added', `${name} (${calories} kcal) has been added to your count!`);
   };
 
   const resetSelection = () => {
@@ -135,10 +138,52 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
     setShowIntakeBar(false);
   };
 
-  const addToIntake = () => {
+  const addToIntake = async () => {
     if (onExerciseBurned && selectedCalories > 0) {
       onExerciseBurned(selectedCalories);
+
+      // Log each exercise to daily_activity_logs
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id ?? null;
+        const today = new Date().toISOString().split('T')[0];
+
+        const logEntries = pendingExercises.map(ex => ({
+          user_id: userId,
+          log_date: today,
+          activity_type: 'exercise',
+          item_name: ex.name,
+          item_category: ex.category,
+          calories: ex.calories,
+          logged_at: new Date().toISOString(),
+        }));
+
+        if (logEntries.length > 0) {
+          await supabase.from('daily_activity_logs').insert(logEntries);
+        }
+
+        // Upsert today's exercise total in goal_logs
+        const { data: existing } = await supabase
+          .from('goal_logs')
+          .select('calories_burned')
+          .eq('log_date', today)
+          .eq('user_id', userId)
+          .single();
+
+        const prev = existing?.calories_burned ?? 0;
+        await supabase.from('goal_logs').upsert({
+          user_id: userId,
+          log_date: today,
+          calories_burned: prev + selectedCalories,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,log_date' });
+
+      } catch (e: any) {
+        console.warn('Exercise log error:', e?.message);
+      }
+
       Alert.alert('Total Exercise Calories Added', `${selectedCalories} kcal added to your exercise total!`);
+      setPendingExercises([]);
       resetSelection();
     }
   };
@@ -309,7 +354,7 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
                       style={[styles.heartIcon, isFavorite(exercise.id) && styles.heartIconActive]} 
                     />
                   </Pressable>
-                  <Pressable style={styles.addCalButton} onPress={() => addCalories(exercise.estimatedCalories)}>
+                  <Pressable style={styles.addCalButton} onPress={() => addCalories(exercise.estimatedCalories, exercise.name, exercise.category)}>
                     <Icon name="plus" size={18} color="#4CAF50" />
                   </Pressable>
                   <Icon 
