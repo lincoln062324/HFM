@@ -221,7 +221,7 @@ const INITIAL_REMINDERS: HabitReminder[] = [
   },
 ];
 
-const Dashboard = () => {
+const Dashboard = ({ onLogout }: { onLogout?: () => void } = {}) => {
   console.log(supabase)
 
   const systemColorScheme = useColorScheme();
@@ -435,6 +435,7 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
   const [repeatOption, setRepeatOption] = useState('Daily');
   // Auth state
   const [userSession, setUserSession] = useState<Session | null>(null);
+  const activeSessionId = React.useRef<string | null>(null); // tracks current session log row
   const [userProfileData, setUserProfileData] = useState<{ full_name: string; email: string; avatar_url: string | null } | null>(null);
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
@@ -542,9 +543,33 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
       }
     };
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUserSession(session);
-      if (session?.user?.id) { fetchUserProfile(session.user.id); fetchReminders(session.user.id); }
+      if (session?.user?.id) {
+        fetchUserProfile(session.user.id);
+        fetchReminders(session.user.id);
+        // Audit login in user_session_logs (include full_name for audit trail)
+        try {
+          const today = new Date().toISOString().split('T')[0];
+          // Fetch full_name so every session row is human-readable
+          const { data: prof } = await supabase
+            .from('user_profiles')
+            .select('full_name')
+            .eq('user_id', session.user.id)
+            .single();
+          const { data: logRow } = await supabase
+            .from('user_session_logs')
+            .insert({
+              user_id:    session.user.id,
+              full_name:  prof?.full_name ?? null,
+              login_date: today,
+              login_at:   new Date().toISOString(),
+            })
+            .select('id')
+            .single();
+          if (logRow?.id) activeSessionId.current = logRow.id;
+        } catch {}
+      }
       console.log('🔑 Initial session:', session?.user?.id || 'NO USER');
     });
 
@@ -552,9 +577,16 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserSession(session);
-      if (session?.user?.id) { fetchUserProfile(session.user.id); fetchReminders(session.user.id); }
-      else setUserProfileData(null);
-      console.log('🔄 Auth change:', session?.user?.id || 'NO USER');
+      if (session?.user?.id) {
+        fetchUserProfile(session.user.id);
+        fetchReminders(session.user.id);
+      } else {
+        // Session ended (SIGNED_OUT) — clear state and navigate to auth
+        setUserProfileData(null);
+        // Call parent callback so AppEntry switches to <AuthScreen />
+        onLogout?.();
+      }
+      console.log('🔄 Auth change:', _event, session?.user?.id || 'NO USER');
     });
 
     return () => subscription.unsubscribe();
@@ -1312,6 +1344,70 @@ const handleCreateHabit = async () => {
   ];
 
   // Navigation handlers - simplified to ensure screens render properly
+  // ── Logout: audit session, clear cache, sign out, navigate to auth ─────────
+  const handleLogout = () => {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // 1. Update user_session_logs — record logout_at + duration
+              if (activeSessionId.current) {
+                const logoutAt = new Date();
+                // Fetch login_at to compute duration_min accurately
+                const { data: sessionRow } = await supabase
+                  .from('user_session_logs')
+                  .select('login_at')
+                  .eq('id', activeSessionId.current)
+                  .single();
+                const loginAt  = sessionRow?.login_at ? new Date(sessionRow.login_at) : null;
+                const durMin   = loginAt ? Math.round((logoutAt.getTime() - loginAt.getTime()) / 60000) : null;
+                await supabase
+                  .from('user_session_logs')
+                  .update({
+                    logout_at:    logoutAt.toISOString(),
+                    duration_min: durMin,
+                  })
+                  .eq('id', activeSessionId.current);
+                activeSessionId.current = null;
+              }
+
+              // 2. Clear local profile cache (avatar, calorie values, etc.)
+              await AsyncStorage.multiRemove([
+                '@fitlife_avatar_url',
+                '@foodValue',
+                '@exerciseValue',
+                '@goalReachedToday',
+                '@goalReachedDate',
+                '@dailyResetTimestamp',
+              ]).catch(() => {});
+
+              // 3. Clear local state so sidebar doesn't flash stale data
+              setUserProfileData(null);
+              setUserSession(null);
+
+              // 4. Sign out from Supabase — triggers onAuthStateChange → AppEntry → Auth screen
+              await supabase.auth.signOut();
+
+              // 5. Call parent nav callback if provided (AppEntry wires this)
+              onLogout?.();
+            } catch (e: any) {
+              console.warn('Logout error:', e?.message);
+              // Force sign out even if DB update failed
+              await supabase.auth.signOut().catch(() => {});
+              onLogout?.();
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const navigateToProfile = () => { 
     closeSidebar(); 
     // Animate in
@@ -1613,8 +1709,11 @@ const navigateToRecipes = () => {
           <Pressable style={({ pressed }) => [styles.sidebarItem, pressed && { backgroundColor: '#333' }]} onPress={navigateToSettings}>
             <Text style={styles.sidebarText}>Settings</Text>
           </Pressable>
-          <Pressable style={({ pressed }) => [styles.sidebarItemL, pressed && { backgroundColor: '#1a112b' }]}>
-            <Text style={styles.sidebarText}>Logout</Text>
+          <Pressable
+            style={({ pressed }) => [styles.sidebarItemL, pressed && { backgroundColor: '#1a112b' }]}
+            onPress={handleLogout}
+          >
+            <Text style={[styles.sidebarText, { color: '#FF6B6B', fontWeight: '700' }]}>Logout</Text>
           </Pressable>
         </ScrollView>
       </Animated.View>

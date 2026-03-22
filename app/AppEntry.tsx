@@ -57,10 +57,11 @@ export default function AppEntry() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user?.id) {
-        logLogin(session.user.id);
+        // logLogin is handled by dashboard on mount — no double-insert needed here
       }
       if (event === 'SIGNED_OUT' || !session) {
-        await logLogout();
+        // logLogout is handled by dashboard's handleLogout (has the session row ID)
+        // AppEntry just flips the screen back to auth
         setAppState('auth');
         setPendingUser(null);
       }
@@ -132,7 +133,14 @@ export default function AppEntry() {
     );
   }
 
-  return <Dashboard />;
+  const handleLogout = () => {
+    // Called by dashboard after supabase.auth.signOut() — just reset AppEntry state
+    setPendingUser(null);
+    activeSessionId.current = null;
+    setAppState('auth');
+  };
+
+  return <Dashboard onLogout={handleLogout} />;
 }
 
 const styles = StyleSheet.create({

@@ -1,7 +1,8 @@
 // Exercise Screen Component with Categories, Details, and Persistent Favorites (RecipesScreen-style)
-import { StyleSheet, Text, View, ScrollView, Pressable, Dimensions, Alert, Modal, Animated } from "react-native";
+import { StyleSheet, Text, View, ScrollView, Pressable, Dimensions, Alert, Modal, Animated, Vibration } from "react-native";
 import { toggleFavoriteLocal, loadFavorites } from './PersistentFavoritesStorage';
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Audio } from 'expo-av';
 import Icon from "react-native-vector-icons/FontAwesome5";
 import Icon2 from "react-native-vector-icons/FontAwesome";
 import supabase from '../lib/supabase';
@@ -59,6 +60,48 @@ export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors 
   const [timerElapsed, setTimerElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
+  const alarmSound  = useRef<Audio.Sound | null>(null);
+  const alarmVibRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Alarm helpers ────────────────────────────────────────────────────────
+  const playAlarm = useCallback(async () => {
+    try {
+      // Configure audio session to play even when silent switch is on
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,        // plays over silent switch
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
+        staysActiveInBackground: false,
+      });
+
+      // Use a bundled system sound URI — works on both iOS and Android
+      // This plays a short beep pattern using the built-in notification sound
+      const { sound } = await Audio.Sound.createAsync(
+        require('../assets/images/alarm_clock_old.mp3'),
+        { shouldPlay: true, isLooping: true, volume: 1.0 }
+      );
+      alarmSound.current = sound;
+
+      // Vibration pattern: 500ms on, 300ms off, repeat
+      Vibration.vibrate([0, 500, 300, 500, 300, 500], true);
+    } catch (e) {
+      // Fallback to vibration-only if audio fails
+      console.warn('Alarm audio failed, using vibration only:', e);
+      Vibration.vibrate([0, 600, 200, 600, 200, 600], true);
+    }
+  }, []);
+
+  const stopAlarm = useCallback(async () => {
+    try {
+      if (alarmSound.current) {
+        await alarmSound.current.stopAsync();
+        await alarmSound.current.unloadAsync();
+        alarmSound.current = null;
+      }
+    } catch {}
+    Vibration.cancel();
+  }, []);
 
   // Parse duration in seconds from instructions / reps strings
   // Handles: "30 seconds", "2 minutes", "45 sec", "1 min 30 sec", "3x30s", etc.
@@ -246,6 +289,7 @@ export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors 
     setTimerExercise(null);
     setTimerElapsed(0);
     progressAnim.setValue(0);
+    stopAlarm(); // silence ringtone + vibration
   };
 
   const pauseTimer = () => setTimerRunning(r => !r);
@@ -267,12 +311,20 @@ export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors 
           clearInterval(timerRef.current!);
           setTimerRunning(false);
           setTimerFinished(true);
+          playAlarm(); // fire ringtone + vibration
         }
         return next;
       });
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [timerRunning, timerExercise]);
+
+  // Cleanup alarm on component unmount
+  useEffect(() => {
+    return () => {
+      stopAlarm();
+    };
+  }, [stopAlarm]);
 
   // Auto-log calories when timer completes
   const handleTimerComplete = async () => {
@@ -309,6 +361,7 @@ export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors 
       console.warn('Timer log error:', e?.message);
     }
 
+    stopAlarm(); // silence alarm immediately when user taps Log
     Alert.alert('🔥 Exercise Complete!', `${name} done! ${cal} kcal burned and logged.`);
     stopTimer();
   };
