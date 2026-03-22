@@ -7,6 +7,8 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Icon5 from 'react-native-vector-icons/FontAwesome5';
 import supabase from '../lib/supabase';
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type AuthMode = 'login' | 'register';
@@ -14,6 +16,7 @@ type Step = 'form' | 'otp';
 
 interface AuthScreenProps {
   onAuthenticated: (isNewUser: boolean, userId: string, email: string) => void;
+  themeColors?: ThemeColors;
 }
 
 // ─── OTP Input — auto-submits on 6th digit ────────────────────────────────────
@@ -78,7 +81,7 @@ const otpStyles = StyleSheet.create({
 });
 
 // ─── Main AuthScreen ──────────────────────────────────────────────────────────
-export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
+export default function AuthScreen({ onAuthenticated, themeColors = DEFAULT_THEME }: AuthScreenProps) {
   const [mode, setMode] = useState<AuthMode>('login');
   const [step, setStep] = useState<Step>('form');
   const [loading, setLoading] = useState(false);

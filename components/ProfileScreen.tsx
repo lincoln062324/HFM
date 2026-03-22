@@ -9,10 +9,13 @@ import Icon1 from "react-native-vector-icons/Foundation";
 import Icon2 from "react-native-vector-icons/Entypo";
 import * as ImagePicker from "expo-image-picker";
 import { LineChart } from "react-native-gifted-charts";
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 interface ProfileScreenProps {
   onClose: () => void;
   onGoalUpdate?: (goal: number) => void;
+  themeColors?: ThemeColors;
 }
 
 // ─── UserProfile type (matches user_profiles table) ──────────────────────────
@@ -60,7 +63,7 @@ const DIET_LABELS: Record<string, string> = {
   gluten_free: 'Gluten-Free',
 };
 
-export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenProps) {
+export default function ProfileScreen({ onClose, onGoalUpdate, themeColors = DEFAULT_THEME }: ProfileScreenProps) {
   const [dailyGoalAchieved, setDailyGoalAchieved] = useState(false);
   const [dailyCalorieGoal, setDailyCalorieGoal] = useState(2000);
   const [foodValue, setFoodValue] = useState(0);
@@ -330,14 +333,14 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
   ];
 
   return (
-    <View style={styles.container}>
-    <View style={styles.header1}>
+    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+    <View style={[styles.header1, { backgroundColor: themeColors.background }]}>
 
     </View>
-      <View style={styles.header}>
-        <Text style={styles.title}>Profile</Text>
+      <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
+        <Text style={[styles.title, { color: themeColors.text }]}>Profile</Text>
         <Pressable onPress={onClose}>
-          <Icon style={styles.closeIcon} name="times-circle" />
+          <Icon style={[styles.closeIcon, { color: themeColors.text }]} name="times-circle" />
         </Pressable>
       </View>
 
@@ -415,8 +418,8 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
 
         {/* Profile Details Card */}
         {profile && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>My Profile</Text>
+          <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>My Profile</Text>
             <View style={styles.infoGrid}>
               <View style={styles.infoItem}>
                 <Icon5 name="ruler-vertical" size={16} color="#c67ee2" />
@@ -466,8 +469,8 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
 
         {/* Goals from onboarding */}
         {profile?.goals && profile.goals.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>My Goals</Text>
+          <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>My Goals</Text>
             <View style={styles.goalsWrap}>
               {profile.goals.map((g: string) => (
                 <View key={g} style={styles.goalChip}>
@@ -479,8 +482,8 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         )}
 
         {/* Weight Progress */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Weight Progress</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>Weight Progress</Text>
           <View style={styles.weightInfo}>
             <View style={styles.weightItem}>
               <Text style={styles.weightLabel}>Current</Text>
@@ -506,8 +509,8 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         </View>
 
         {/* Weekly Progress Line Graph */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Weekly Weight Progress</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>Weekly Weight Progress</Text>
           <View style={styles.chartContainer}>
             <LineChart
               data={lineData}
@@ -529,7 +532,7 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         </View>
 
         {/* Daily Targets from user_profiles */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <Text style={styles.sectionTitles}>Daily Targets</Text>
           <View style={styles.stepsContainer}>
             <Image source={require("../assets/images/fs.png")} style={styles.stepsIcon} />
@@ -552,8 +555,8 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         {/* ── Activity Overview ─────────────────────────────────────────── */}
 
         {/* Daily Progress Summary */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📊 Today's Progress</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>📊 Today's Progress</Text>
           <View style={styles.progressRow}>
             <View style={styles.progressCard}>
               <Icon5 name="fire" size={20} color="#F3AF41" />
@@ -587,9 +590,9 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         </View>
 
         {/* Exercise Favorites */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>🏋️ Exercise Favorites</Text>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🏋️ Exercise Favorites</Text>
             <Text style={styles.sectionCount}>{activityData.exerciseFavorites.length}</Text>
           </View>
           {activityLoading ? <ActivityIndicator color="#c67ee2" style={{ marginVertical: 10 }} /> :
@@ -611,9 +614,9 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         </View>
 
         {/* Notes & Lists */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>📝 Notes & Lists</Text>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>📝 Notes & Lists</Text>
             <Text style={styles.sectionCount}>{activityData.notes.length}</Text>
           </View>
           {activityLoading ? <ActivityIndicator color="#c67ee2" style={{ marginVertical: 10 }} /> :
@@ -642,9 +645,9 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         </View>
 
         {/* Favorite Recipes, Meals & Foods */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>❤️ Saved Favorites</Text>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>❤️ Saved Favorites</Text>
             <Text style={styles.sectionCount}>
               {activityData.recipeFavorites.length + activityData.mealFavorites.length + activityData.foodFavorites.length}
             </Text>
@@ -704,9 +707,9 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         </View>
 
         {/* Habits & Reminders */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>🔔 Habits & Reminders</Text>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🔔 Habits & Reminders</Text>
             <Text style={styles.sectionCount}>{activityData.reminders.length}</Text>
           </View>
           {activityLoading ? <ActivityIndicator color="#c67ee2" style={{ marginVertical: 10 }} /> :
@@ -736,8 +739,8 @@ export default function ProfileScreen({ onClose, onGoalUpdate }: ProfileScreenPr
         </View>
 
         {/* Daily Goal Status */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Daily Goal Status</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>Daily Goal Status</Text>
           <View style={styles.goalStatus}>
             <Icon 
               style={[styles.goalIcon, dailyGoalAchieved && styles.goalIconAchieved]} 

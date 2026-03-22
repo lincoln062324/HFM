@@ -9,11 +9,14 @@ import Icon from "react-native-vector-icons/FontAwesome";
 import Icon5 from "react-native-vector-icons/FontAwesome5";
 import { PieChart } from "react-native-gifted-charts";
 import supabase from "../lib/supabase";
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface GoalsScreenProps {
   onClose: () => void;
   onGoalUpdate?: (goal: number) => void;
+  themeColors?: ThemeColors;
 }
 
 // ─── Motivation goal options ──────────────────────────────────────────────────
@@ -45,7 +48,7 @@ const StatCard = ({ label, value, sub, color = '#fff' }: { label: string; value:
 );
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps) {
+export default function GoalsScreen({ onClose, onGoalUpdate, themeColors = DEFAULT_THEME }: GoalsScreenProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -367,11 +370,11 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <View style={styles.header1} />
-        <View style={styles.header}>
+      <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+        <View style={[styles.header1, { backgroundColor: themeColors.background }]} />
+        <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
           <Text style={styles.title}>Goals</Text>
-          <Pressable onPress={onClose}><Icon style={styles.closeIcon} name="times-circle" /></Pressable>
+          <Pressable onPress={onClose}><Icon style={[styles.closeIcon, { color: themeColors.text }]} name="times-circle" /></Pressable>
         </View>
         <View style={styles.loadingBox}>
           <ActivityIndicator size="large" color="#c67ee2" />
@@ -382,18 +385,18 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header1} />
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+      <View style={[styles.header1, { backgroundColor: themeColors.background }]} />
+      <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
         <Text style={styles.title}>Goals</Text>
-        <Pressable onPress={onClose}><Icon style={styles.closeIcon} name="times-circle" /></Pressable>
+        <Pressable onPress={onClose}><Icon style={[styles.closeIcon, { color: themeColors.text }]} name="times-circle" /></Pressable>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
 
         {/* ── Daily Calorie Goal ───────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🔥 Daily Calorie Goal</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🔥 Daily Calorie Goal</Text>
 
           {editingCalorie ? (
             <View style={styles.editBox}>
@@ -438,9 +441,9 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
         </View>
 
         {/* ── Weight Goal ──────────────────────────────────────────────────── */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <View style={styles.secRow}>
-            <Text style={styles.sectionTitle}>⚖️ Weight Goal</Text>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>⚖️ Weight Goal</Text>
             <Pressable onPress={() => {
               setTempTarget(String(targetWeight ?? ''));
               setTempCurrent(String(currentWeight ?? ''));
@@ -501,9 +504,9 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
         </View>
 
         {/* ── Motivation Goals ─────────────────────────────────────────────── */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <View style={styles.secRow}>
-            <Text style={styles.sectionTitle}>🎯 Motivation Goals</Text>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🎯 Motivation Goals</Text>
             <Pressable onPress={() => setShowGoalPicker(true)} style={styles.editChip}>
               <Icon5 name="edit" size={12} color="#c67ee2" />
               <Text style={styles.editChipText}> Edit</Text>
@@ -560,8 +563,8 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
         </View>
 
         {/* ── Food Intake + Nutritional Breakdown ──────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🥗 Food Intake</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🥗 Food Intake</Text>
           <Text style={styles.dataSource}>From RecipesScreen · this week</Text>
 
           <View style={styles.statsRow}>
@@ -646,9 +649,9 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
         </View>
 
         {/* ── Exercise ─────────────────────────────────────────────────────── */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <View style={styles.secRow}>
-            <Text style={styles.sectionTitle}>🏋️ Exercise</Text>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🏋️ Exercise</Text>
             <Pressable onPress={() => setExerciseStats(p => ({ ...p, editingTarget: true, tempTarget: String(p.dailyTarget) }))}>
               <Icon5 name="pencil-alt" size={14} color="#c67ee2" />
             </Pressable>
@@ -714,8 +717,8 @@ export default function GoalsScreen({ onClose, onGoalUpdate }: GoalsScreenProps)
         </View>
 
         {/* ── Consistency Tracker ──────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📅 Consistency Tracker</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>📅 Consistency Tracker</Text>
 
           {/* Streak */}
           <View style={styles.streakBox}>

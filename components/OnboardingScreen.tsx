@@ -7,9 +7,12 @@ import {
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Icon5 from 'react-native-vector-icons/FontAwesome5';
 import supabase from '../lib/supabase';
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 interface OnboardingScreenProps {
   onComplete: () => void;
+  themeColors?: ThemeColors;
   userId: string;
   email: string;
 }
@@ -49,7 +52,7 @@ const STEPS = [
   { title: 'Daily Targets',      subtitle: 'Set your starting calorie goals',     key: 'targets' },
 ];
 
-export default function OnboardingScreen({ onComplete, userId, email }: OnboardingScreenProps) {
+export default function OnboardingScreen({ onComplete, userId, email, themeColors = DEFAULT_THEME }: OnboardingScreenProps) {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;

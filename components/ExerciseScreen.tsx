@@ -6,6 +6,8 @@ import Icon from "react-native-vector-icons/FontAwesome5";
 import Icon2 from "react-native-vector-icons/FontAwesome";
 import supabase from '../lib/supabase';
 import { EXERCISE_CATEGORIES } from './ExerciseCategories';
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 interface SupabaseExercise {
   id: string;
@@ -35,9 +37,10 @@ interface Exercise {
 interface ExerciseScreenProps {
   onClose: () => void;
   onExerciseBurned?: (calories: number) => void;
+  themeColors?: ThemeColors;
 }
 
-export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseScreenProps) {
+export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors = DEFAULT_THEME }: ExerciseScreenProps) {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedCalories, setSelectedCalories] = useState(0);
   const [showIntakeBar, setShowIntakeBar] = useState(false);
@@ -251,12 +254,12 @@ export default function ExerciseScreen({ onClose, onExerciseBurned }: ExerciseSc
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header1} />
-      <View style={styles.header}>
-        <Text style={styles.title}>Exercises</Text>
+    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+      <View style={[styles.header1, { backgroundColor: themeColors.background }]} />
+      <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
+        <Text style={[styles.title, { color: themeColors.text }]}>Exercises</Text>
         <Pressable onPress={onClose}>
-          <Icon style={styles.closeIcon} name="times-circle" />
+          <Icon style={[styles.closeIcon, { color: themeColors.text }]} name="times-circle" />
         </Pressable>
       </View>
 

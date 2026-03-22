@@ -5,6 +5,8 @@ import Icon from "react-native-vector-icons/FontAwesome6";
 import Icon2 from "react-native-vector-icons/Ionicons";
 import Icon3 from "react-native-vector-icons/FontAwesome5";
 import supabase from '../lib/supabase';
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 interface FoodItem {
   id: string;
@@ -62,7 +64,7 @@ const FOOD_CATEGORIES = [
   { id: 'dairy', name: 'Dairy', icon: 'cheese' },
 ];
 
-const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAdded?: (calories: number) => void }) => {
+const RecipesScreen = ({ onClose, onFoodAdded, themeColors = DEFAULT_THEME }: { onClose: () => void; onFoodAdded?: (calories: number) => void; themeColors?: ThemeColors }) => {
   const [activeTab, setActiveTab] = useState<'recipes' | 'meals' | 'foods'>('recipes');
   const [selectedCalories, setSelectedCalories] = useState(0);
   const [showIntakeBar, setShowIntakeBar] = useState(false);
@@ -314,7 +316,7 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
 
   if (loading) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: themeColors.background }]}>
         <View style={[StyleSheet.absoluteFill, styles.loadingContainer]}>
           <Text style={styles.loadingText}>Loading recipes...</Text>
         </View>
@@ -685,12 +687,12 @@ const RecipesScreen = ({ onClose, onFoodAdded }: { onClose: () => void; onFoodAd
   );
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header1} />
-      <View style={styles.header}>
-        <Text style={styles.title}>Recipes, Meals & Foods</Text>
+    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+      <View style={[styles.header1, { backgroundColor: themeColors.background }]} />
+      <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
+        <Text style={[styles.title, { color: themeColors.text }]}>Recipes, Meals & Foods</Text>
         <Pressable onPress={onClose}>
-          <Icon style={styles.closeIcon} name="times-circle" />
+          <Icon style={[styles.closeIcon, { color: themeColors.text }]} name="times-circle" />
         </Pressable>
       </View>
       <View style={styles.tabNav}>

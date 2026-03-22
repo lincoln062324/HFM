@@ -9,8 +9,10 @@ import Icon5 from "react-native-vector-icons/FontAwesome5";
 import { PieChart, BarChart } from "react-native-gifted-charts";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import supabase from "../lib/supabase";
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
 
-interface WeeklyReportScreenProps { onClose: () => void; }
+
+interface WeeklyReportScreenProps { onClose: () => void; themeColors?: ThemeColors; }
 
 // ── Day labels for this week (Sun→Sat relative to today) ─────────────────────
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -48,7 +50,7 @@ const exerciseInsight = (burned: number, target: number, consumed: number): { te
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function WeeklyReportScreen({ onClose }: WeeklyReportScreenProps) {
+export default function WeeklyReportScreen({ onClose, themeColors = DEFAULT_THEME }: WeeklyReportScreenProps) {
   const [loading, setLoading] = useState(true);
   const [days] = useState(getLast7Days());
 
@@ -312,11 +314,11 @@ export default function WeeklyReportScreen({ onClose }: WeeklyReportScreenProps)
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <View style={styles.header1} />
-        <View style={styles.header}>
-          <Text style={styles.title}>My Weekly Report</Text>
-          <Pressable onPress={onClose}><Icon name="times-circle" style={styles.closeIcon} /></Pressable>
+      <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+        <View style={[styles.header1, { backgroundColor: themeColors.background }]} />
+        <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
+          <Text style={[styles.title, { color: themeColors.text }]}>My Weekly Report</Text>
+          <Pressable onPress={onClose}><Icon name="times-circle" style={[styles.closeIcon, { color: themeColors.text }]} /></Pressable>
         </View>
         <View style={styles.loadingBox}>
           <ActivityIndicator size="large" color="#c67ee2" />
@@ -327,11 +329,11 @@ export default function WeeklyReportScreen({ onClose }: WeeklyReportScreenProps)
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header1} />
-      <View style={styles.header}>
-        <Text style={styles.title}>My Weekly Report</Text>
-        <Pressable onPress={onClose}><Icon name="times-circle" style={styles.closeIcon} /></Pressable>
+    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+      <View style={[styles.header1, { backgroundColor: themeColors.background }]} />
+      <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
+        <Text style={[styles.title, { color: themeColors.text }]}>My Weekly Report</Text>
+        <Pressable onPress={onClose}><Icon name="times-circle" style={[styles.closeIcon, { color: themeColors.text }]} /></Pressable>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
@@ -363,8 +365,8 @@ export default function WeeklyReportScreen({ onClose }: WeeklyReportScreenProps)
         </View>
 
         {/* ── Weekly Consistency ───────────────────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📅 Weekly Consistency</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>📅 Weekly Consistency</Text>
 
           {/* Day dots */}
           <View style={styles.dayRow}>
@@ -442,8 +444,8 @@ export default function WeeklyReportScreen({ onClose }: WeeklyReportScreenProps)
         </View>
 
         {/* ── Food Intake Breakdown ────────────────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🥗 Food Intake Breakdown</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🥗 Food Intake Breakdown</Text>
 
           {/* Summary stats */}
           <View style={styles.triRow}>
@@ -550,8 +552,8 @@ export default function WeeklyReportScreen({ onClose }: WeeklyReportScreenProps)
         </View>
 
         {/* ── Exercise Breakdown ───────────────────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🏋️ Exercise Breakdown</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🏋️ Exercise Breakdown</Text>
 
           <View style={styles.triRow}>
             <View style={styles.triCard}>
@@ -674,8 +676,8 @@ export default function WeeklyReportScreen({ onClose }: WeeklyReportScreenProps)
         </View>
 
         {/* ── Habits Section ───────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🔔 Habit Consistency</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🔔 Habit Consistency</Text>
 
           {habitSummary.total === 0 ? (
             <Text style={styles.emptyHint}>No habits created yet. Add habits from the Reminders screen.</Text>
@@ -754,8 +756,8 @@ export default function WeeklyReportScreen({ onClose }: WeeklyReportScreenProps)
         </View>
 
         {/* ── Login Consistency ────────────────────────────────────────── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📲 App Engagement</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>📲 App Engagement</Text>
           <View style={styles.triRow}>
             <View style={styles.triCard}>
               <Text style={styles.triVal}>{sessionSummary.daysLoggedIn}</Text>

@@ -6,6 +6,8 @@ import {
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import supabase from '../lib/supabase';
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface FoodEntry {
@@ -22,6 +24,7 @@ export interface FoodEntry {
 
 interface CameraScreenProps {
   onClose: () => void;
+  themeColors?: ThemeColors;
   onFoodAnalyzed?: (food: FoodEntry) => void;
 }
 
@@ -59,7 +62,7 @@ const mapRow = (row: any): FoodEntry => ({
 });
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function CameraScreen({ onClose, onFoodAnalyzed }: CameraScreenProps) {
+export default function CameraScreen({ onClose, onFoodAnalyzed, themeColors = DEFAULT_THEME }: CameraScreenProps) {
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>('back');
   const [isTakingPicture, setIsTakingPicture] = useState(false);
@@ -215,11 +218,11 @@ export default function CameraScreen({ onClose, onFoodAnalyzed }: CameraScreenPr
 
   // ── Permissions ────────────────────────────────────────────────────────────
   if (!permission) {
-    return <View style={styles.container}><Text style={styles.message}>Requesting camera permission...</Text></View>;
+    return <View style={[styles.container, { backgroundColor: themeColors.background }]}><Text style={styles.message}>Requesting camera permission...</Text></View>;
   }
   if (!permission.granted) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: themeColors.background }]}>
         <View style={styles.permissionContainer}>
           <Icon name="camera" style={styles.permissionIcon} />
           <Text style={styles.permissionTitle}>Camera Permission Required</Text>
@@ -237,11 +240,11 @@ export default function CameraScreen({ onClose, onFoodAnalyzed }: CameraScreenPr
 
   // ── Main render ────────────────────────────────────────────────────────────
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
       <CameraView ref={cameraRef} style={styles.camera} facing={facing} mode="picture">
 
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
           <Pressable style={styles.headerButton} onPress={onClose}>
             <Icon name="times" style={styles.headerIcon} />
           </Pressable>
@@ -463,9 +466,9 @@ const styles = StyleSheet.create({
   message: { color: '#FFFFFF', fontSize: 18 },
   camera: { flex: 1, width: '100%', height: '100%' },
   header: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 50, paddingHorizontal: 20 },
-  headerButton: { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  headerButton: { top: -10, width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   headerIcon: { fontSize: 24, color: '#FFFFFF' },
-  instructions: { position: 'absolute', top: 50, left: 125, width: 150, height: 50, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20 },
+  instructions: { position: 'absolute', top: 40, left: 125, width: 150, height: 50, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20 },
   instructionText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
   photoPreview: { position: 'absolute', top: 120, right: 20, width: 100, height: 100, borderRadius: 10, overflow: 'hidden', borderWidth: 2, borderColor: '#c67ee2' },
   previewImage: { width: '100%', height: '100%', resizeMode: 'cover' },

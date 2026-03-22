@@ -8,6 +8,8 @@ import Icon from "react-native-vector-icons/FontAwesome";
 import Icon2 from "react-native-vector-icons/AntDesign";
 import Icon5 from "react-native-vector-icons/FontAwesome5";
 import supabase from "../lib/supabase";
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface HabitReminder {
@@ -28,6 +30,7 @@ export type AddHabitFunction = () => void;
 
 interface RemindersScreenProps {
   onClose: () => void;
+  themeColors?: ThemeColors;
   onNavigateToAddHabit: () => void;
   reminders?: HabitReminder[];
   setReminders?: React.Dispatch<React.SetStateAction<HabitReminder[]>>;
@@ -83,6 +86,7 @@ export default function RemindersScreen({
   addNewHabit,
   reminders: externalReminders,
   setReminders: setExternalReminders,
+  themeColors = DEFAULT_THEME,
 }: RemindersScreenProps) {
   const [localReminders, setLocalReminders] = useState<HabitReminder[]>([]);
   const [loading, setLoading]   = useState(true);
@@ -268,12 +272,12 @@ export default function RemindersScreen({
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <View style={styles.container}>
-      <View style={styles.header1} />
-      <View style={styles.header}>
-        <Text style={styles.title}>Reminders</Text>
+    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+      <View style={[styles.header1, { backgroundColor: themeColors.background }]} />
+      <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
+        <Text style={[styles.title, { color: themeColors.text }]}>Reminders</Text>
         <Pressable onPress={onClose}>
-          <Icon name="times-circle" style={styles.closeIcon} />
+          <Icon name="times-circle" style={[styles.closeIcon, { color: themeColors.text }]} />
         </Pressable>
       </View>
 
@@ -310,8 +314,8 @@ export default function RemindersScreen({
           </View>
 
           {/* ── Consistency Progress Tracker ──────────────────────────────── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>📊 Consistency Tracker</Text>
+          <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>📊 Consistency Tracker</Text>
 
             {reminders.length === 0 ? (
               <Text style={styles.emptyHint}>Create habits to start tracking your consistency.</Text>
@@ -396,9 +400,9 @@ export default function RemindersScreen({
           </View>
 
           {/* ── Today's Daily Schedule ─────────────────────────────────────── */}
-          <View style={styles.section}>
+          <View style={[styles.section, { backgroundColor: themeColors.card }]}>
             <View style={styles.secRow}>
-              <Text style={styles.sectionTitle}>🗓 Today's Schedule</Text>
+              <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🗓 Today's Schedule</Text>
               <View style={styles.todayBadge}>
                 <Text style={styles.todayBadgeText}>{todayDone}/{todaySchedule.length} done</Text>
               </View>
@@ -456,9 +460,9 @@ export default function RemindersScreen({
           </View>
 
           {/* ── Active Reminders ──────────────────────────────────────────── */}
-          <View style={styles.section}>
+          <View style={[styles.section, { backgroundColor: themeColors.card }]}>
             <View style={styles.secRow}>
-              <Text style={styles.sectionTitle}>🔔 Active Reminders</Text>
+              <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🔔 Active Reminders</Text>
               <View style={[styles.countBadge, { backgroundColor: 'rgba(76,175,80,0.2)' }]}>
                 <Text style={[styles.countBadgeText, { color: '#4CAF50' }]}>{activeReminders.length}</Text>
               </View>
@@ -552,9 +556,9 @@ export default function RemindersScreen({
 
           {/* ── Inactive Reminders ────────────────────────────────────────── */}
           {inactiveReminders.length > 0 && (
-            <View style={styles.section}>
+            <View style={[styles.section, { backgroundColor: themeColors.card }]}>
               <View style={styles.secRow}>
-                <Text style={styles.sectionTitle}>🔕 Inactive Reminders</Text>
+                <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🔕 Inactive Reminders</Text>
                 <View style={[styles.countBadge, { backgroundColor: 'rgba(100,100,100,0.2)' }]}>
                   <Text style={[styles.countBadgeText, { color: '#888' }]}>{inactiveReminders.length}</Text>
                 </View>
@@ -610,8 +614,8 @@ export default function RemindersScreen({
           )}
 
           {/* ── How It Works ──────────────────────────────────────────────── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>💡 How It Works</Text>
+          <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+            <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>💡 How It Works</Text>
             <View style={styles.instructionCard}>
               {[
                 { icon: 'bell',         lib: 'fa',  text: 'Active Reminders',   body: 'Turn on habits to include them in your daily schedule and consistency tracker.' },
@@ -737,7 +741,7 @@ const styles = StyleSheet.create({
   actionBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
 
   // How it works
-  instructionCard: { gap: 12 },
+  instructionCard: { marginTop: 10, gap: 12 },
   instructionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   instrIcon: { fontSize: 17, color: '#c67ee2', marginTop: 2 },
   instrText: { fontSize: 13, color: '#ccc', flex: 1, lineHeight: 19 },

@@ -6,9 +6,12 @@ import Icon2 from "react-native-vector-icons/Ionicons";
 import Icon3 from "react-native-vector-icons/AntDesign";
 import { LineChart, BarChart, PieChart } from "react-native-gifted-charts";
 import * as Location from 'expo-location';
+import { ThemeColors, DEFAULT_THEME } from '../components/theme';
+
 
 interface StepsScreenProps {
   onClose: () => void;
+  themeColors?: ThemeColors;
 }
 
 // Mock steps data
@@ -45,7 +48,7 @@ const monthlyCalories = STEPS_DATA.monthly.reduce((sum, item) => sum + item.calo
 // Calculate calories burned based on steps
 const calculateCalories = (steps: number) => Math.round(steps * 0.04);
 
-export default function StepsScreen({ onClose }: StepsScreenProps) {
+export default function StepsScreen({ onClose, themeColors = DEFAULT_THEME }: StepsScreenProps) {
   // Tab state for Daily Report (daily/weekly/monthly)
   const [activeTab, setActiveTab] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   
@@ -216,19 +219,19 @@ export default function StepsScreen({ onClose }: StepsScreenProps) {
   const calculateSteps = (distanceMeters: number) => Math.round(distanceMeters / 0.75);
 
   return (
-    <View style={styles.container}>
-            <View style={styles.header1} />
-      <View style={styles.header}>
-        <Text style={styles.title}>Steps</Text>
+    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+            <View style={[styles.header1, { backgroundColor: themeColors.background }]} />
+      <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
+        <Text style={[styles.title, { color: themeColors.text }]}>Steps</Text>
         <Pressable onPress={onClose}>
-          <Icon style={styles.closeIcon} name="times-circle" />
+          <Icon style={[styles.closeIcon, { color: themeColors.text }]} name="times-circle" />
         </Pressable>
       </View>
 
       <ScrollView style={styles.content}>
         {/* Live Tracking Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Live Step Tracking</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>Live Step Tracking</Text>
           
           <View style={styles.permissionContainer}>
             <View style={styles.permissionStatus}>
@@ -284,8 +287,8 @@ export default function StepsScreen({ onClose }: StepsScreenProps) {
         </View>
 
         {/* Daily Report Section with Tabs */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Report</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>Report</Text>
           
           {/* Tab Navigation */}
           <View style={styles.tabContainer}>
@@ -370,8 +373,8 @@ export default function StepsScreen({ onClose }: StepsScreenProps) {
         </View>
 
         {/* Progress Charts */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Steps Progress</Text>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>Steps Progress</Text>
           <View style={styles.graphContainer}>
             <LineChart
               data={getChartData()}
@@ -416,8 +419,8 @@ export default function StepsScreen({ onClose }: StepsScreenProps) {
         </View>
 
         {/* Breakdown */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>
             {activeTab === 'daily' ? 'Recent Days' : activeTab === 'weekly' ? 'Daily Breakdown' : 'Weekly Breakdown'}
           </Text>
           {(activeTab === 'daily' ? STEPS_DATA.weekly.slice(0, 3) : activeTab === 'weekly' ? STEPS_DATA.weekly : STEPS_DATA.monthly).map((item, index) => (

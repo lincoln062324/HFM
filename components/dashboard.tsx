@@ -11,70 +11,16 @@ import type { Session } from '@supabase/supabase-js';
 
 
 // Theme colors matching SettingsScreen
-const THEME_COLORS = {
-  system: {
-    id: 'system',
-    primary: '#2196F3',
-    secondary: '#1a237e',
-    background: '#0d1b2a',
-    card: '#1b263b',
-    text: '#FFFFFF',
-    accent: '#64b5f6',
-  },
-  purple: {
-    id: 'purple',
-    primary: '#c67ee2',
-    secondary: '#1e1929',
-    background: '#15041f',
-    card: '#211c24',
-    text: '#FFFFFF',
-    accent: '#84d7f4',
-  },
-  blue: {
-    id: 'blue',
-    primary: '#2196F3',
-    secondary: '#1a237e',
-    background: '#0d1b2a',
-    card: '#1b263b',
-    text: '#FFFFFF',
-    accent: '#64b5f6',
-  },
-  green: {
-    id: 'green',
-    primary: '#4CAF50',
-    secondary: '#1b5e20',
-    background: '#0a1f0a',
-    card: '#1b3a1b',
-    text: '#FFFFFF',
-    accent: '#81c784',
-  },
-  orange: {
-    id: 'orange',
-    primary: '#FF9800',
-    secondary: '#e65100',
-    background: '#1a0f00',
-    card: '#2d1f0a',
-    text: '#FFFFFF',
-    accent: '#ffb74d',
-  },
-  red: {
-    id: 'red',
-    primary: '#f44336',
-    secondary: '#b71c1c',
-    background: '#1a0505',
-    card: '#2d0f0f',
-    text: '#FFFFFF',
-    accent: '#e57373',
-  },
-  teal: {
-    id: 'teal',
-    primary: '#009688',
-    secondary: '#004d40',
-    background: '#001a17',
-    card: '#0d2d28',
-    text: '#FFFFFF',
-    accent: '#4db6ac',
-  },
+// Theme palettes — must match SettingsScreen THEMES exactly
+const THEME_COLORS: Record<string, { id:string; primary:string; secondary:string; background:string; card:string; text:string; accent:string }> = {
+  purple:   { id:'purple',   primary:'#c67ee2', secondary:'#1e1929', background:'#15041f', card:'#211c24', text:'#FFFFFF', accent:'#84d7f4' },
+  midnight: { id:'midnight', primary:'#5c9cef', secondary:'#1a2035', background:'#0d1423', card:'#182030', text:'#FFFFFF', accent:'#7fc8f8' },
+  forest:   { id:'forest',   primary:'#5ccc7f', secondary:'#1a2e1c', background:'#0c1f0e', card:'#192d1b', text:'#FFFFFF', accent:'#a8e6b8' },
+  ember:    { id:'ember',    primary:'#ff9f4a', secondary:'#2a1a0a', background:'#1a0e04', card:'#261706', text:'#FFFFFF', accent:'#ffd080' },
+  rose:     { id:'rose',     primary:'#e8849a', secondary:'#2a1520', background:'#1a0c14', card:'#26131e', text:'#FFFFFF', accent:'#f5b8c8' },
+  teal:     { id:'teal',     primary:'#38c9c0', secondary:'#0f2524', background:'#071918', card:'#0e2523', text:'#FFFFFF', accent:'#7de8e2' },
+  slate:    { id:'slate',    primary:'#94a3b8', secondary:'#1e2432', background:'#111620', card:'#1a2030', text:'#FFFFFF', accent:'#cbd5e1' },
+  gold:     { id:'gold',     primary:'#f0c040', secondary:'#221a06', background:'#160f02', card:'#201608', text:'#FFFFFF', accent:'#ffe08a' },
 };
 
 const DEFAULT_THEME = 'purple';
@@ -299,18 +245,7 @@ const Dashboard = () => {
 
   // Get current theme colors based on app theme setting
   const getCurrentThemeColors = () => {
-    if (appTheme === 'system') {
-      const isDark = systemColorScheme === 'dark';
-      return {
-        primary: isDark ? '#2196F3' : '#2196F3',
-        secondary: isDark ? '#1a237e' : '#bbdefb',
-        background: isDark ? '#0d1b2a' : '#f5f5f5',
-        card: isDark ? '#1b263b' : '#ffffff',
-        text: isDark ? '#FFFFFF' : '#000000',
-        accent: isDark ? '#64b5f6' : '#1976D2',
-      };
-    }
-    return THEME_COLORS[appTheme as keyof typeof THEME_COLORS] || THEME_COLORS.purple;
+    return THEME_COLORS[appTheme] || THEME_COLORS.purple;
   };
 
   const currentThemeColors = getCurrentThemeColors();
@@ -1544,15 +1479,15 @@ const navigateToRecipes = () => {
           }} />
         </Animated.View>
         <Animated.View style={[styles.screenContent, { transform: [{ scale: screenScale }] }]}>
-{showProfileScreen && <ProfileScreen onClose={handleCloseProfile} onGoalUpdate={updateDailyGoal} />}
-          {showWeeklyReportScreen && <WeeklyReportScreen onClose={handleCloseWeeklyReport} />}
-{showGoalsScreen && <GoalsScreen onClose={handleCloseGoals} onGoalUpdate={updateDailyGoal} />}
-          {showExerciseScreen && <ExerciseScreen onClose={handleCloseExercise} onExerciseBurned={saveExerciseValue} />}
-          {showRecipesScreen && <RecipesScreen onClose={handleCloseRecipes} onFoodAdded={saveFoodValue} />}
-          {showStepsScreen && <StepsScreen onClose={handleCloseSteps} />}
-{showRemindersScreen && <RemindersScreen onClose={handleCloseReminders} onNavigateToAddHabit={openHabitModal} addNewHabit={openHabitModal} reminders={reminders} setReminders={setReminders} />}
+{showProfileScreen && <ProfileScreen onClose={handleCloseProfile} onGoalUpdate={updateDailyGoal} themeColors={currentThemeColors} />}
+          {showWeeklyReportScreen && <WeeklyReportScreen onClose={handleCloseWeeklyReport} themeColors={currentThemeColors} />}
+{showGoalsScreen && <GoalsScreen onClose={handleCloseGoals} onGoalUpdate={updateDailyGoal} themeColors={currentThemeColors} />}
+          {showExerciseScreen && <ExerciseScreen onClose={handleCloseExercise} onExerciseBurned={saveExerciseValue} themeColors={currentThemeColors} />}
+          {showRecipesScreen && <RecipesScreen onClose={handleCloseRecipes} onFoodAdded={saveFoodValue} themeColors={currentThemeColors} />}
+          {showStepsScreen && <StepsScreen onClose={handleCloseSteps} themeColors={currentThemeColors} />}
+{showRemindersScreen && <RemindersScreen onClose={handleCloseReminders} onNavigateToAddHabit={openHabitModal} addNewHabit={openHabitModal} reminders={reminders} setReminders={setReminders} themeColors={currentThemeColors} />}
           {showSettingsScreen && <SettingsScreen currentTheme={appTheme} onThemeChange={handleThemeChange} onClose={handleCloseSettings} />}
-          {showCameraScreen && <CameraScreen onClose={handleCloseCamera} />}
+          {showCameraScreen && <CameraScreen onClose={handleCloseCamera} themeColors={currentThemeColors} />}
         </Animated.View>
       </Animated.View>
     );
