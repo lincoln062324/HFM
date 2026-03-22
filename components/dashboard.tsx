@@ -3455,7 +3455,7 @@ const styles = StyleSheet.create({
   savedNotesTitle: {
     fontSize: 20,
     fontWeight: 800,
-    color: "#ffffff",
+    color: "#c67ee2",
     marginBottom: 10,
   },
   savedNoteCard: {

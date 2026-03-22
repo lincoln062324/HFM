@@ -1,7 +1,7 @@
 // Exercise Screen Component with Categories, Details, and Persistent Favorites (RecipesScreen-style)
-import { StyleSheet, Text, View, ScrollView, Pressable, Dimensions, Alert } from "react-native";
+import { StyleSheet, Text, View, ScrollView, Pressable, Dimensions, Alert, Modal, Animated } from "react-native";
 import { toggleFavoriteLocal, loadFavorites } from './PersistentFavoritesStorage';
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Icon from "react-native-vector-icons/FontAwesome5";
 import Icon2 from "react-native-vector-icons/FontAwesome";
 import supabase from '../lib/supabase';
@@ -50,6 +50,43 @@ export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors 
   const [showFavorites, setShowFavorites] = useState(false);
   const [userFavoritesIds, setUserFavoritesIds] = useState<Set<string>>(new Set());
   const [pendingExercises, setPendingExercises] = useState<{name: string; calories: number; category: string}[]>([]);
+
+  // ── Timer state ───────────────────────────────────────────────────────────
+  const [timerExercise, setTimerExercise] = useState<Exercise | null>(null);
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerFinished, setTimerFinished] = useState(false);
+  const [timerElapsed, setTimerElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const progressAnim = useRef(new Animated.Value(0)).current;
+
+  // Parse duration in seconds from instructions / reps strings
+  // Handles: "30 seconds", "2 minutes", "45 sec", "1 min 30 sec", "3x30s", etc.
+  const parseTimerSeconds = useCallback((exercise: Exercise): number => {
+    const text = `${exercise.instructions} ${exercise.reps}`.toLowerCase();
+
+    // "X min Y sec" or "X minute Y second"
+    const minSec = text.match(/(\d+)\s*min(?:ute)?s?\s*(\d+)\s*sec(?:ond)?s?/);
+    if (minSec) return parseInt(minSec[1]) * 60 + parseInt(minSec[2]);
+
+    // "X minutes" or "X min"
+    const minOnly = text.match(/(\d+)\s*min(?:ute)?s?/);
+    if (minOnly) return parseInt(minOnly[1]) * 60;
+
+    // "X seconds" or "Xs"
+    const secOnly = text.match(/(\d+)\s*s(?:ec(?:ond)?s?)?(?:|$)/);
+    if (secOnly && parseInt(secOnly[1]) > 5) return parseInt(secOnly[1]);
+
+    // reps-based: default 30s per rep set
+    const repsMatch = exercise.reps.match(/(\d+)\s*(?:reps|rep|x)/i);
+    if (repsMatch) return parseInt(repsMatch[1]) * 2; // 2 sec per rep
+
+    // Fallback based on category
+    const catDefaults: Record<string, number> = {
+      cardio: 180, strength: 120, flexibility: 60, balance: 90, core: 60
+    };
+    return catDefaults[exercise.category] ?? 60;
+  }, []);
 
   // Fetch exercises from Supabase
   useEffect(() => {
@@ -189,6 +226,97 @@ export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors 
       setPendingExercises([]);
       resetSelection();
     }
+  };
+
+  // ── Timer functions ──────────────────────────────────────────────────────
+  const startTimer = (exercise: Exercise) => {
+    const secs = parseTimerSeconds(exercise);
+    setTimerExercise(exercise);
+    setTimerSeconds(secs);
+    setTimerElapsed(0);
+    setTimerRunning(true);
+    setTimerFinished(false);
+    progressAnim.setValue(0);
+  };
+
+  const stopTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setTimerRunning(false);
+    setTimerFinished(false);
+    setTimerExercise(null);
+    setTimerElapsed(0);
+    progressAnim.setValue(0);
+  };
+
+  const pauseTimer = () => setTimerRunning(r => !r);
+
+  // Tick the timer every second
+  useEffect(() => {
+    if (!timerRunning || !timerExercise) return;
+    timerRef.current = setInterval(() => {
+      setTimerElapsed(prev => {
+        const next = prev + 1;
+        const total = timerSeconds;
+        // Animate progress bar
+        Animated.timing(progressAnim, {
+          toValue: next / total,
+          duration: 900,
+          useNativeDriver: false,
+        }).start();
+        if (next >= total) {
+          clearInterval(timerRef.current!);
+          setTimerRunning(false);
+          setTimerFinished(true);
+        }
+        return next;
+      });
+    }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [timerRunning, timerExercise]);
+
+  // Auto-log calories when timer completes
+  const handleTimerComplete = async () => {
+    if (!timerExercise) return;
+    const cal = timerExercise.estimatedCalories;
+    const name = timerExercise.name;
+    const category = timerExercise.category;
+
+    // Add to local pending so intakeBar shows it
+    setSelectedCalories(prev => prev + cal);
+    setShowIntakeBar(true);
+    setPendingExercises(prev => [...prev, { name, calories: cal, category }]);
+
+    // Immediately push to dashboard + Supabase
+    if (onExerciseBurned) onExerciseBurned(cal);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const userId = session?.user?.id ?? null;
+      const today = new Date().toISOString().split('T')[0];
+      await supabase.from('daily_activity_logs').insert([{
+        user_id: userId, log_date: today, activity_type: 'exercise',
+        item_name: name, item_category: category, calories: cal,
+        logged_at: new Date().toISOString(),
+      }]);
+      const { data: existing } = await supabase.from('goal_logs')
+        .select('calories_burned').eq('log_date', today).eq('user_id', userId).single();
+      const prev = existing?.calories_burned ?? 0;
+      await supabase.from('goal_logs').upsert({
+        user_id: userId, log_date: today,
+        calories_burned: prev + cal,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,log_date' });
+    } catch (e: any) {
+      console.warn('Timer log error:', e?.message);
+    }
+
+    Alert.alert('🔥 Exercise Complete!', `${name} done! ${cal} kcal burned and logged.`);
+    stopTimer();
+  };
+
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60).toString().padStart(2, '0');
+    const s = (sec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   };
 
   const toggleFavorite = async (exerciseId: string, exerciseName: string, exerciseCategory: string) => {
@@ -357,6 +485,13 @@ export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors 
                       style={[styles.heartIcon, isFavorite(exercise.id) && styles.heartIconActive]} 
                     />
                   </Pressable>
+                  {/* Timer button — shown on all exercises */}
+                  <Pressable
+                    style={styles.timerButton}
+                    onPress={(e) => { e.stopPropagation(); startTimer(exercise); }}
+                  >
+                    <Icon name="clock" size={18} color="#F3AF41" />
+                  </Pressable>
                   <Pressable style={styles.addCalButton} onPress={() => addCalories(exercise.estimatedCalories, exercise.name, exercise.category)}>
                     <Icon name="plus" size={18} color="#4CAF50" />
                   </Pressable>
@@ -401,6 +536,96 @@ export default function ExerciseScreen({ onClose, onExerciseBurned, themeColors 
           ))
         )}
       </ScrollView>
+      {/* ── Exercise Timer Modal ──────────────────────────────────────────── */}
+      <Modal visible={timerExercise !== null} transparent animationType="slide">
+        <View style={styles.timerOverlay}>
+          <View style={styles.timerCard}>
+            {/* Exercise name */}
+            <Text style={styles.timerExName} numberOfLines={2}>
+              {timerExercise?.name}
+            </Text>
+            <Text style={styles.timerCategory}>
+              {timerExercise?.category} · {timerExercise?.estimatedCalories} kcal
+            </Text>
+
+            {/* Countdown ring / display */}
+            <View style={styles.timerRingWrap}>
+              <View style={styles.timerRingBg} />
+              <View style={styles.timerRingInner}>
+                {timerFinished ? (
+                  <Icon name="check-circle" size={48} color="#4CAF50" />
+                ) : (
+                  <>
+                    <Text style={styles.timerCountdown}>
+                      {formatTime(Math.max(timerSeconds - timerElapsed, 0))}
+                    </Text>
+                    <Text style={styles.timerCountdownSub}>remaining</Text>
+                  </>
+                )}
+              </View>
+              {/* Animated progress ring (simplified bar) */}
+              <View style={styles.timerProgressBg}>
+                <Animated.View style={[styles.timerProgressFill, {
+                  width: progressAnim.interpolate({
+                    inputRange: [0, 1], outputRange: ['0%', '100%']
+                  })
+                }]} />
+              </View>
+            </View>
+
+            {/* Elapsed */}
+            <Text style={styles.timerElapsed}>
+              {formatTime(timerElapsed)} elapsed
+            </Text>
+
+            {/* Instructions reminder */}
+            <View style={styles.timerInstrBox}>
+              <Text style={styles.timerInstrText} numberOfLines={3}>
+                {timerExercise?.instructions}
+              </Text>
+            </View>
+
+            {/* Steps scroll */}
+            {timerExercise?.steps && timerExercise.steps.length > 0 && (
+              <ScrollView style={styles.timerStepsList} showsVerticalScrollIndicator={false}>
+                {timerExercise.steps.map((step, i) => (
+                  <View key={i} style={styles.timerStepRow}>
+                    <View style={styles.timerStepNum}>
+                      <Text style={styles.timerStepNumTxt}>{i + 1}</Text>
+                    </View>
+                    <Text style={styles.timerStepTxt}>{step}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+
+            {/* Buttons */}
+            {timerFinished ? (
+              <View style={styles.timerBtnRow}>
+                <Pressable style={[styles.timerBtn, styles.timerBtnComplete]} onPress={handleTimerComplete}>
+                  <Icon name="fire-alt" size={18} color="#fff" />
+                  <Text style={styles.timerBtnTxt}>Log {timerExercise?.estimatedCalories} kcal</Text>
+                </Pressable>
+                <Pressable style={[styles.timerBtn, styles.timerBtnStop]} onPress={stopTimer}>
+                  <Icon name="times" size={18} color="#fff" />
+                  <Text style={styles.timerBtnTxt}>Dismiss</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.timerBtnRow}>
+                <Pressable style={[styles.timerBtn, timerRunning ? styles.timerBtnPause : styles.timerBtnStart]} onPress={pauseTimer}>
+                  <Icon name={timerRunning ? "pause" : "play"} size={18} color="#fff" />
+                  <Text style={styles.timerBtnTxt}>{timerRunning ? 'Pause' : 'Resume'}</Text>
+                </Pressable>
+                <Pressable style={[styles.timerBtn, styles.timerBtnStop]} onPress={stopTimer}>
+                  <Icon name="stop" size={18} color="#fff" />
+                  <Text style={styles.timerBtnTxt}>Stop</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -698,5 +923,156 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#CCCCCC",
     lineHeight: 20,
+  },
+
+  // ── Timer button ─────────────────────────────────────────────────────────
+  timerButton: {
+    padding: 5,
+  },
+
+  // ── Timer Modal ───────────────────────────────────────────────────────────
+  timerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'flex-end',
+  },
+  timerCard: {
+    backgroundColor: '#1e1929',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    paddingBottom: 36,
+    borderWidth: 1,
+    borderColor: '#362c3a',
+    gap: 12,
+    maxHeight: '90%',
+  },
+  timerExName: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  timerCategory: {
+    fontSize: 13,
+    color: '#888',
+    textAlign: 'center',
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  timerRingWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 8,
+    gap: 10,
+  },
+  timerRingBg: {
+    position: 'absolute',
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    borderWidth: 6,
+    borderColor: '#2a2335',
+  },
+  timerRingInner: {
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timerCountdown: {
+    top: 20,
+    fontSize: 44,
+    fontWeight: '900',
+    color: '#F3AF41',
+  },
+  timerCountdownSub: {
+    top: 20,
+    fontSize: 12,
+    color: '#888',
+    fontWeight: '600',
+  },
+  timerProgressBg: {
+    height: 8,
+    width: '100%',
+    backgroundColor: '#2a2335',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginTop: 25,
+  },
+  timerProgressFill: {
+    height: 8,
+    backgroundColor: '#F3AF41',
+    borderRadius: 4,
+  },
+  timerElapsed: {
+    fontSize: 13,
+    color: '#666',
+    textAlign: 'center',
+  },
+  timerInstrBox: {
+    backgroundColor: '#211c24',
+    borderRadius: 12,
+    padding: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#c67ee2',
+  },
+  timerInstrText: {
+    fontSize: 13,
+    color: '#ccc',
+    lineHeight: 18,
+  },
+  timerStepsList: {
+    maxHeight: 140,
+  },
+  timerStepRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+    gap: 10,
+  },
+  timerStepNum: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#c67ee2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  timerStepNumTxt: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  timerStepTxt: {
+    flex: 1,
+    fontSize: 13,
+    color: '#ccc',
+    lineHeight: 18,
+  },
+  timerBtnRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  },
+  timerBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 14,
+    gap: 8,
+  },
+  timerBtnStart: { backgroundColor: '#c67ee2' },
+  timerBtnPause: { backgroundColor: '#F3AF41' },
+  timerBtnStop:  { backgroundColor: '#3a2a3a' },
+  timerBtnComplete: { backgroundColor: '#4CAF50' },
+  timerBtnTxt: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
   },
 });

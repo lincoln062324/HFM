@@ -89,6 +89,13 @@ export default function WeeklyReportScreen({ onClose, themeColors = DEFAULT_THEM
     loginDates: [] as string[],
   });
 
+  const [stepsSummary, setStepsSummary] = useState({
+    weeklySteps: 0, weeklyCalories: 0, weeklyKm: 0, weeklyMinutes: 0,
+    avgDailySteps: 0, daysActive: 0, goalDays: 0,
+    dailyBars: [] as { value: number; label: string; frontColor: string }[],
+    recentDays: [] as { date: string; label: string; steps: number; calories: number; activeMinutes: number; distanceKm: number }[],
+  });
+
   // ── Load all data ──────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -118,7 +125,7 @@ export default function WeeklyReportScreen({ onClose, themeColors = DEFAULT_THEM
       if (settings?.exercise_daily_target) setExerciseTarget(settings.exercise_daily_target);
 
       // ── Fetch all data in parallel ─────────────────────────────────────
-      const [actRes, sessionRes, reminderRes] = await Promise.all([
+      const [actRes, sessionRes, reminderRes, stepsRes] = await Promise.all([
         supabase.from('daily_activity_logs')
           .select('log_date, activity_type, item_name, item_category, calories')
           .eq('user_id', userId)
@@ -133,11 +140,20 @@ export default function WeeklyReportScreen({ onClose, themeColors = DEFAULT_THEM
         supabase.from('user_reminders')
           .select('name, is_active, total_done, total_undone')
           .eq('user_id', userId),
+        supabase.from('daily_activity_logs')
+          .select('log_date, item_name, calories')
+          .eq('user_id', userId)
+          .eq('activity_type', 'exercise')
+          .eq('item_category', 'steps')
+          .gte('log_date', weekStart)
+          .lte('log_date', today)
+          .order('log_date', { ascending: true }),
       ]);
 
-      const actLogs    = actRes.data     ?? [];
+      const actLogs     = actRes.data     ?? [];
       const sessionLogs = sessionRes.data ?? [];
-      const habits     = reminderRes.data ?? [];
+      const habits      = reminderRes.data ?? [];
+      const stepsLogs   = stepsRes.data   ?? [];
 
       // ── Consistency per day ────────────────────────────────────────────
       const loginDates = [...new Set(sessionLogs.map((s: any) => s.login_date))] as string[];
@@ -273,6 +289,43 @@ export default function WeeklyReportScreen({ onClose, themeColors = DEFAULT_THEM
         inactive: habits.filter((h: any) => !h.is_active).length,
         totalDone, totalMissed, consistencyRate: rate,
         habits: habitRows,
+      });
+
+      // ── Steps summary ──────────────────────────────────────────────────
+      const STEP_M = 0.75, CAL_STEP = 0.04, CADENCE = 100;
+      const stepMap: Record<string, { steps:number; calories:number; distanceKm:number; activeMinutes:number }> = {};
+      days.forEach(d => { stepMap[d.date] = { steps:0, calories:0, distanceKm:0, activeMinutes:0 }; });
+
+      stepsLogs.forEach((row: any) => {
+        const d = row.log_date;
+        if (!stepMap[d]) return;
+        const m = String(row.item_name ?? '').match(/steps:(\d+)/i);
+        const s = m ? parseInt(m[1]) : Math.round((row.calories ?? 0) / CAL_STEP);
+        stepMap[d].steps          += s;
+        stepMap[d].calories       += row.calories ?? 0;
+        stepMap[d].distanceKm      = parseFloat((stepMap[d].distanceKm + s * STEP_M / 1000).toFixed(2));
+        stepMap[d].activeMinutes  += Math.round(s / CADENCE);
+      });
+
+      const DAILY_GOAL = 10000;
+      const stepDays = days.map(d => ({ date:d.date, label:d.label, ...stepMap[d.date] }));
+      const wSteps    = stepDays.reduce((s,d)=>s+d.steps,0);
+      const wCal      = stepDays.reduce((s,d)=>s+d.calories,0);
+      const wKm       = parseFloat(stepDays.reduce((s,d)=>s+d.distanceKm,0).toFixed(1));
+      const wMin      = stepDays.reduce((s,d)=>s+d.activeMinutes,0);
+      const daysActiveSteps = stepDays.filter(d=>d.steps>0).length;
+      const goalDays  = stepDays.filter(d=>d.steps>=DAILY_GOAL).length;
+
+      const stepBars = stepDays.map(d => ({
+        value: d.steps, label: d.label,
+        frontColor: d.steps >= DAILY_GOAL ? '#4CAF50' : '#84d7f4',
+      }));
+
+      setStepsSummary({
+        weeklySteps: wSteps, weeklyCalories: wCal, weeklyKm: wKm, weeklyMinutes: wMin,
+        avgDailySteps: Math.round(wSteps / 7), daysActive: daysActiveSteps, goalDays,
+        dailyBars: stepBars,
+        recentDays: stepDays.filter(d => d.steps > 0).reverse().slice(0, 5),
       });
 
     } catch (e: any) {
@@ -755,6 +808,111 @@ export default function WeeklyReportScreen({ onClose, themeColors = DEFAULT_THEM
           )}
         </View>
 
+        {/* ── Steps Section ───────────────────────────────────────────── */}
+        <View style={[styles.section, { backgroundColor: themeColors.card }]}>
+          <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>🚶 Steps & Walking</Text>
+
+          {stepsSummary.weeklySteps === 0 ? (
+            <Text style={styles.emptyHint}>No steps tracked this week. Open the Steps screen to start walking!</Text>
+          ) : (
+            <>
+              {/* Stats row */}
+              <View style={styles.triRow}>
+                <View style={styles.triCard}>
+                  <Text style={[styles.triVal, { color: themeColors.primary }]}>{stepsSummary.weeklySteps.toLocaleString()}</Text>
+                  <Text style={styles.triLbl}>Total Steps</Text>
+                </View>
+                <View style={styles.triCard}>
+                  <Text style={[styles.triVal, { color: '#fc9139' }]}>{stepsSummary.weeklyCalories.toLocaleString()}</Text>
+                  <Text style={styles.triLbl}>kcal Burned</Text>
+                </View>
+                <View style={styles.triCard}>
+                  <Text style={[styles.triVal, { color: '#84d7f4' }]}>{stepsSummary.weeklyMinutes}</Text>
+                  <Text style={styles.triLbl}>Active Min</Text>
+                </View>
+              </View>
+
+              <View style={styles.triRow}>
+                <View style={styles.triCard}>
+                  <Text style={[styles.triVal, { color: themeColors.accent }]}>{stepsSummary.weeklyKm} km</Text>
+                  <Text style={styles.triLbl}>Distance</Text>
+                </View>
+                <View style={styles.triCard}>
+                  <Text style={[styles.triVal, { color: stepsSummary.goalDays >= 5 ? '#4CAF50' : '#FFA500' }]}>{stepsSummary.goalDays}/7</Text>
+                  <Text style={styles.triLbl}>Goal Days</Text>
+                </View>
+                <View style={styles.triCard}>
+                  <Text style={[styles.triVal, { color: '#ccc' }]}>{stepsSummary.avgDailySteps.toLocaleString()}</Text>
+                  <Text style={styles.triLbl}>Daily Avg</Text>
+                </View>
+              </View>
+
+              {/* Steps insight */}
+              <View style={[styles.insightBox, { borderColor: stepsSummary.goalDays >= 5 ? '#4CAF50' : '#FFA500' }]}>
+                <Text style={[styles.insightText, { color: stepsSummary.goalDays >= 5 ? '#4CAF50' : '#FFA500' }]}>
+                  {stepsSummary.goalDays >= 6
+                    ? '🔥 Outstanding week! You hit your step goal most days — keep that streak!'
+                    : stepsSummary.goalDays >= 4
+                    ? '✅ Solid walking week. One or two more active days and you will be at full streak.'
+                    : stepsSummary.weeklySteps > 30000
+                    ? '💪 Good total steps, but try spreading activity more evenly across the week.'
+                    : '💡 More daily walks will help reach your 10,000-step goal and burn extra calories.'}
+                </Text>
+              </View>
+
+              {/* Daily steps bar chart */}
+              <Text style={styles.subTitle}>Daily Steps (🟢 = goal reached)</Text>
+              <View style={styles.barWrap}>
+                <BarChart
+                  data={stepsSummary.dailyBars}
+                  width={300} height={130} barWidth={32} spacing={12}
+                  roundedTop roundedBottom isAnimated
+                  xAxisThickness={1} yAxisThickness={1}
+                  xAxisColor="#362c3a" yAxisColor="#362c3a"
+                  xAxisLabelTextStyle={{ color: '#ccc', fontSize: 11 }}
+                  yAxisTextStyle={{ color: '#ccc', fontSize: 10 }}
+                  noOfSections={4}
+                  maxValue={Math.max(...stepsSummary.dailyBars.map(b => b.value), 10000) + 1000}
+                  referenceLine1Config={{ color: '#4CAF5055', width: 1, type: 'dashed' }}
+                  referenceLine1Position={10000}
+                />
+              </View>
+
+              {/* Recent walk days */}
+              {stepsSummary.recentDays.length > 0 && (
+                <>
+                  <Text style={styles.subTitle}>Recent Walk Days</Text>
+                  {stepsSummary.recentDays.map((d, i) => (
+                    <View key={i} style={[styles.stepsHistRow, { borderBottomColor: '#362c3a' }]}>
+                      <View style={[styles.stepsDateBox, { backgroundColor: themeColors.secondary }]}>
+                        <Text style={[styles.stepsDay, { color: themeColors.primary }]}>{d.label}</Text>
+                        <Text style={styles.stepsDate}>{d.date.slice(5)}</Text>
+                      </View>
+                      <View style={{ flex: 1, gap: 3 }}>
+                        <Text style={[styles.stepsCount, { color: themeColors.text }]}>
+                          {d.steps.toLocaleString()} steps
+                        </Text>
+                        <Text style={styles.stepsMeta}>{d.distanceKm} km · {d.activeMinutes} min</Text>
+                        <View style={styles.stepsBarBg}>
+                          <View style={[styles.stepsBarFill, {
+                            width: `${Math.min((d.steps / 10000) * 100, 100)}%`,
+                            backgroundColor: d.steps >= 10000 ? '#4CAF50' : themeColors.primary,
+                          }]} />
+                        </View>
+                      </View>
+                      <View style={{ alignItems: 'center', gap: 2 }}>
+                        <Icon5 name="fire" size={13} color="#fc9139" />
+                        <Text style={styles.stepsCal}>{d.calories}</Text>
+                        <Text style={styles.stepsCalLbl}>kcal</Text>
+                      </View>
+                    </View>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+        </View>
+
         {/* ── Login Consistency ────────────────────────────────────────── */}
         <View style={[styles.section, { backgroundColor: themeColors.card }]}>
           <Text style={[styles.sectionTitle, { color: themeColors.primary }]}>📲 App Engagement</Text>
@@ -906,4 +1064,16 @@ const styles = StyleSheet.create({
   loginDayCol: { alignItems: 'center', gap: 4 },
   loginDot: { width: 30, height: 30, borderRadius: 15 },
   loginDayLabel: { fontSize: 10, color: '#888' },
+
+  // Steps history
+  stepsHistRow:  { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, gap: 12 },
+  stepsDateBox:  { width: 46, borderRadius: 10, padding: 8, alignItems: 'center' },
+  stepsDay:      { fontSize: 12, fontWeight: '800' },
+  stepsDate:     { fontSize: 10, color: '#888' },
+  stepsCount:    { fontSize: 14, fontWeight: '700' },
+  stepsMeta:     { fontSize: 11, color: '#888' },
+  stepsBarBg:    { height: 4, backgroundColor: '#2a2335', borderRadius: 2, overflow: 'hidden', marginTop: 2 },
+  stepsBarFill:  { height: 4, borderRadius: 2 },
+  stepsCal:      { fontSize: 15, fontWeight: '900', color: '#fc9139' },
+  stepsCalLbl:   { fontSize: 10, color: '#888' },
 });
