@@ -242,7 +242,9 @@ export default function CameraScreen({ onClose, onFoodAnalyzed, themeColors = DE
   return (
     <View style={[styles.container, { backgroundColor: themeColors.background }]}>
       <CameraView ref={cameraRef} style={styles.camera} facing={facing} mode="picture">
+        <View style={styles.head}>
 
+        </View>
         {/* Header */}
         <View style={[styles.header, { backgroundColor: themeColors.secondary, borderBottomColor: themeColors.primary + "44" }]}>
           <Pressable style={styles.headerButton} onPress={onClose}>
@@ -465,8 +467,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#15041f' },
   message: { color: '#FFFFFF', fontSize: 18 },
   camera: { flex: 1, width: '100%', height: '100%' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 50, paddingHorizontal: 20 },
-  headerButton: { top: -10, width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  head: { width: '100%', height: 30, backgroundColor: 'transparent'},
+  header: { gap: 250, flexDirection: 'row', justifyContent: 'space-evenly', width: '100%', height: 70 },
+  headerButton: { top:10, width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   headerIcon: { fontSize: 24, color: '#FFFFFF' },
   instructions: { position: 'absolute', top: 40, left: 125, width: 150, height: 50, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20 },
   instructionText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },

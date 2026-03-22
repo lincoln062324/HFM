@@ -227,7 +227,25 @@ const Dashboard = () => {
   const systemColorScheme = useColorScheme();
   const [isSidebarVisible, setIsSidebarVisible] = useState(false);
   const [appTheme, setAppTheme] = useState(DEFAULT_THEME);
-  
+
+  // ── Session tagline — rotates every login ──────────────────────────────
+  const SESSION_TAGLINES = [
+    "Move Better.", "Own Progress.", "Stronger Daily.", "Track Triumph.",
+    "Fit Forward.", "Sweat to Success.", "Grind. Glow. Go.", "Fit. Fierce. Forever.",
+    "Power Your Progress.", "Train. Transform. Triumph.", "Grind to Shine.",
+    "Sweat. Set. Success.", "Flex Your Future.", "Fit Happens.",
+    "Push. Power. Progress.", "Strong Vibes Only.", "Rise and Grind.",
+    "Lift. Live. Level Up.", "Fuel the Hustle.", "Train. Gain. Sustain.",
+    "Beat. Burn. Build.", "Move. Motivate. Master.",
+  ];
+
+  // Pick a new tagline each session: use session start minute as seed so it
+  // changes every login but stays stable while the app is open.
+  const sessionTagline = React.useMemo(() => {
+    const seed = Math.floor(Date.now() / 60_000); // changes every minute but stable within session
+    return SESSION_TAGLINES[seed % SESSION_TAGLINES.length];
+  }, []); // empty deps = evaluated once per mount (i.e. per session)
+
   // Load saved theme on mount
   useEffect(() => {
     const loadSavedTheme = async () => {
@@ -417,7 +435,7 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
   const [repeatOption, setRepeatOption] = useState('Daily');
   // Auth state
   const [userSession, setUserSession] = useState<Session | null>(null);
-  const [userProfileData, setUserProfileData] = useState<{ full_name: string; email: string } | null>(null);
+  const [userProfileData, setUserProfileData] = useState<{ full_name: string; email: string; avatar_url: string | null } | null>(null);
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
   // Sticky Notes State
@@ -490,14 +508,37 @@ const [isNotificationModalVisible, setIsNotificationModalVisible] = useState(fal
   useEffect(() => {
     const fetchUserProfile = async (userId: string) => {
       try {
+        // Load cached avatar instantly so sidebar shows photo without waiting for Supabase
+        const cachedAvatar = await AsyncStorage.getItem('@fitlife_avatar_url').catch(() => null);
+
         const { data } = await supabase
           .from('user_profiles')
-          .select('full_name, email')
+          .select('full_name, email, avatar_url')
           .eq('user_id', userId)
           .single();
-        if (data) setUserProfileData({ full_name: data.full_name ?? '', email: data.email ?? '' });
+
+        if (data) {
+          const avatarUrl = data.avatar_url ?? cachedAvatar ?? null;
+          setUserProfileData({
+            full_name:  data.full_name ?? '',
+            email:      data.email ?? '',
+            avatar_url: avatarUrl,
+          });
+          // Keep AsyncStorage in sync with the latest DB value
+          if (data.avatar_url) {
+            await AsyncStorage.setItem('@fitlife_avatar_url', data.avatar_url).catch(() => {});
+          }
+        } else if (cachedAvatar) {
+          // No DB row yet but we have a cached avatar — show it
+          setUserProfileData(prev => prev ? { ...prev, avatar_url: cachedAvatar } : null);
+        }
       } catch (e) {
         console.log('Profile fetch error:', e);
+        // Even on error, load from cache so sidebar never shows blank
+        const cachedAvatar = await AsyncStorage.getItem('@fitlife_avatar_url').catch(() => null);
+        if (cachedAvatar) {
+          setUserProfileData(prev => prev ? { ...prev, avatar_url: cachedAvatar } : null);
+        }
       }
     };
 
@@ -1335,11 +1376,29 @@ const navigateToRecipes = () => {
       Animated.timing(screenBackdrop, { toValue: 0, duration: 200, useNativeDriver: true }),
       Animated.timing(screenScale, { toValue: 0.8, duration: 200, useNativeDriver: true }),
       Animated.timing(screenOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
-    ]).start(() => {
+    ]).start(async () => {
       screenBackdrop.setValue(0);
       screenScale.setValue(0.8);
       screenOpacity.setValue(0);
       setShowProfileScreen(false);
+      // Re-fetch profile so name + avatar in sidebar update immediately after any changes
+      if (userSession?.user?.id) {
+        try {
+          const cachedAvatar = await AsyncStorage.getItem('@fitlife_avatar_url').catch(() => null);
+          const { data } = await supabase
+            .from('user_profiles')
+            .select('full_name, email, avatar_url')
+            .eq('user_id', userSession.user.id)
+            .single();
+          if (data) {
+            setUserProfileData({
+              full_name:  data.full_name ?? '',
+              email:      data.email ?? '',
+              avatar_url: data.avatar_url ?? cachedAvatar ?? null,
+            });
+          }
+        } catch {}
+      }
     });
   };
   const handleCloseWeeklyReport = () => {
@@ -1503,13 +1562,20 @@ const navigateToRecipes = () => {
         </Pressable>
         <View style={styles.userProfile}>
           {/* Avatar with initials instead of static image */}
-          <View style={styles.profileAvatar}>
-            <Text style={styles.profileAvatarText}>
-              {userProfileData?.full_name
-                ? userProfileData.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
-                : userSession?.user?.email?.[0]?.toUpperCase() ?? '?'}
-            </Text>
-          </View>
+          {userProfileData?.avatar_url ? (
+            <Image
+              source={{ uri: userProfileData.avatar_url }}
+              style={styles.profileAvatar}
+            />
+          ) : (
+            <View style={styles.profileAvatarInitials}>
+              <Text style={styles.profileAvatarText}>
+                {userProfileData?.full_name
+                  ? userProfileData.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+                  : userSession?.user?.email?.[0]?.toUpperCase() ?? '?'}
+              </Text>
+            </View>
+          )}
           <View style={styles.userInfo}>
             <Text style={styles.userName}>
               {userProfileData?.full_name || userSession?.user?.email?.split('@')[0] || 'User'}
@@ -1558,7 +1624,7 @@ const navigateToRecipes = () => {
           <Icon style={styles.icon} name="bars"/>
         </Pressable>
         <View style={styles.tagline}>
-          <Text style={styles.text}>MyFitnessJourney</Text>
+          <Text style={styles.text}>{sessionTagline}</Text>
         </View>
         <Pressable onPress={toggleMenu}>
           <Icon style={styles.icon2} name="plus-circle"/>
@@ -2457,18 +2523,15 @@ const styles = StyleSheet.create({
     height: 40,
     width: 200,
     top: 15,
-    shadowColor: "#1d1820",
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 1,
-    shadowRadius: 0,
-    elevation: 5,
     backgroundColor: "#D1C7FF",
     borderRadius: 10,
     justifyContent: "center",
     alignItems: "center",
+    borderBottomWidth: 4,
+    borderColor:"#211c24",
   },
   text: {
-    fontSize: 18,
+    fontSize: 16,
     fontFamily: "Roboto",
     fontWeight: "800",
     color: "#000000",
@@ -2560,6 +2623,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   profileAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 12,
+    borderWidth: 2,
+    borderColor: '#362c3a',
+  },
+  profileAvatarInitials: {
     width: 50,
     height: 50,
     borderRadius: 25,

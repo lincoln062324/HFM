@@ -37,6 +37,9 @@ interface UserProfile {
   avatar_url: string | null;
 }
 
+// ─── Persistent avatar cache key ─────────────────────────────────────────────
+const AVATAR_CACHE_KEY = '@fitlife_avatar_url';
+
 const GOAL_LABELS: Record<string, string> = {
   lose_weight: '🏃 Lose Weight',
   gain_muscle: '💪 Gain Muscle',
@@ -98,9 +101,18 @@ export default function ProfileScreen({ onClose, onGoalUpdate, themeColors = DEF
 
   useEffect(() => {
     loadGoalStatus();
+    loadCachedAvatar(); // load instantly from cache before Supabase responds
     loadProfile();
     loadActivityData();
   }, []);
+
+  // ── Load avatar from AsyncStorage cache (instant on every open) ───────────
+  const loadCachedAvatar = async () => {
+    try {
+      const cached = await AsyncStorage.getItem(AVATAR_CACHE_KEY);
+      if (cached) setPhotoUri(cached);
+    } catch {}
+  };
 
   // ── Fetch user_profiles row from Supabase ─────────────────────────────────
   const loadProfile = async () => {
@@ -121,6 +133,11 @@ export default function ProfileScreen({ onClose, onGoalUpdate, themeColors = DEF
         if (data.daily_calorie_goal) {
           setDailyCalorieGoal(data.daily_calorie_goal);
           await AsyncStorage.setItem('@dailyCalorieGoal', String(data.daily_calorie_goal));
+        }
+        // Sync avatar_url from DB — update both state and cache so it persists
+        if (data.avatar_url) {
+          setPhotoUri(data.avatar_url);
+          await AsyncStorage.setItem(AVATAR_CACHE_KEY, data.avatar_url);
         }
       }
     } catch (err: any) {
@@ -297,9 +314,14 @@ export default function ProfileScreen({ onClose, onGoalUpdate, themeColors = DEF
         .eq('user_id', session.user.id);
 
       setProfile(prev => prev ? { ...prev, avatar_url: publicUrl } : prev);
+      // Persist URL to AsyncStorage so avatar survives screen close/reopen
+      await AsyncStorage.setItem(AVATAR_CACHE_KEY, publicUrl);
     } catch (err: any) {
       console.warn('Photo upload error:', err.message);
-      // Keep local preview even if upload fails
+      // Keep local preview even if upload fails — also cache local URI as fallback
+      if (uri) {
+        await AsyncStorage.setItem(AVATAR_CACHE_KEY, uri).catch(() => {});
+      }
     } finally {
       setUploadingPhoto(false);
     }
